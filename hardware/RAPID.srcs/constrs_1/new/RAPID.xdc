@@ -8,8 +8,6 @@
 #       Only the external PL ports defined in the block design need constraints.
 # =============================================================================
 
-# ---- Kill switch (input) ----------------------------------------------------
-
 # ---- DRV8323 spindle enable (output) ----------------------------------------
 set_property PACKAGE_PIN R16 [get_ports En_Spindle]
 set_property IOSTANDARD LVCMOS33 [get_ports En_Spindle]
@@ -59,3 +57,13 @@ set_property PULLTYPE PULLDOWN [get_ports prox_in_0]
 set_property PACKAGE_PIN P18 [get_ports {LaserEn[0]}]
 set_property IOSTANDARD LVCMOS33 [get_ports {LaserEn[0]}]
 set_property PULLTYPE PULLDOWN [get_ports {LaserEn[0]}]
+
+# MLX90393 I2C0 via EMIO → Arduino header (SCL=A5/P15, SDA=A4/P16)
+# External 4.7 kΩ pull-ups to 3.3 V required on breadboard.
+set_property PACKAGE_PIN P15 [get_ports IIC_0_0_scl_io]
+set_property IOSTANDARD  LVCMOS33 [get_ports IIC_0_0_scl_io]
+set_property SLEW        SLOW     [get_ports IIC_0_0_scl_io]
+
+set_property PACKAGE_PIN P16 [get_ports IIC_0_0_sda_io]
+set_property IOSTANDARD  LVCMOS33 [get_ports IIC_0_0_sda_io]
+set_property SLEW        SLOW     [get_ports IIC_0_0_sda_io]

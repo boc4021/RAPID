@@ -45,10 +45,12 @@
 #include "sleep.h"
 #include "xuartps.h"
 #include "xuartps_hw.h"
+#include "mlx90393.h"
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <math.h>
 
 /* ------------------------------------------------------------------ */
 /*  GPIO constants                                                    */
@@ -108,6 +110,7 @@
 
 static XGpio   gpio;
 static XUartPs Uart_Ps;
+static MLX90393 mlx;
 
 /* ------------------------------------------------------------------ */
 /*  CRC / serialisation helpers                                       */
@@ -271,6 +274,12 @@ int main(void)
     XUartPs_SetBaudRate(&Uart_Ps, BAUD_RATE);
     XUartPs_SetOperMode(&Uart_Ps, XUARTPS_OPER_MODE_NORMAL);
 
+    /* ---- initialise MLX90393 magnetometer (I2C0 via EMIO → Arduino A4/A5) ---- */
+    if (mlx_init(&mlx, XPAR_XIICPS_0_BASEADDR) != XST_SUCCESS)
+        debug_printf("[MLX] init FAILED - angle logging disabled.");
+    else
+        debug_printf("[MLX] ready.");
+
     u32 config = 0;
 
     /* ===== 1. ZEROING =============================================== */
@@ -356,6 +365,13 @@ int main(void)
                 XGpio_DiscreteWrite(&gpio, 1, config & GPIO_MASK);
                 first_point = 0;
                 debug_printf("Laser ON.");
+            }
+
+            /* log measured spindle angle for verification */
+            if (mlx.initialized) {
+                float theta_meas = 0.0f;
+                if (mlx_read_angle(&mlx, &theta_meas) == XST_SUCCESS)
+                    debug_printf("[THETA] %.2f deg", theta_meas);
             }
 
             /* ACK the point - echo payload back to PC */

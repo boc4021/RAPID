@@ -31,6 +31,7 @@ set(USER_INCLUDE_DIRECTORIES
 set(USER_COMPILE_SOURCES
 "../systemControl.c"
 "../platform.c"
+"../mlx90393.c"
 )
 
 # -----------------------------------------
@@ -112,6 +113,7 @@ set(USER_LINK_OMIT_ALL_SYMBOL_INFO )
 # Add any libraries to be linked below, they will be added as extra libraries.
 # User needs to update USER_LINK_DIRECTORIES below with these library search paths.
 set(USER_LINK_LIBRARIES
+"m"
 )
 
 # Add any directories to look for the libraries to be linked.

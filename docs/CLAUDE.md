@@ -17,6 +17,7 @@ input.gds → inputParser → pcCommunication → UART → systemControl.c
 systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
                                      └──→ spindle.vhd (BLDC)
                                      └──→ LaserEn (GPIO pin P18)
+                ── PS I2C0 (EMIO→PL) ──→ MLX90393 magnetometer (angle logging)
 ```
 
 `systemControl.c` now handles both packet reception and motor/laser control in a single bare-metal app.
@@ -33,6 +34,9 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 | `src/gui.py` | PySide6 GUI — launches RAPID.exe, parses stdout, plots ACK'd points |
 | `vitis_workspace/testControl/OLD_systemControl.c` | Old motor/laser controller |
 | `vitis_workspace/systemControl/systemControl.c` | **Active** FPGA app — packet receiver + motor/laser control |
+| `vitis_workspace/systemControl/mlx90393.h` | MLX90393 magnetometer driver — header |
+| `vitis_workspace/systemControl/mlx90393.c` | MLX90393 magnetometer driver — implementation |
+| `old/angleMeasure.ino` | Archived Arduino angle-tracking sketch (original reference) |
 | `hardware/RAPID.xpr` | Vivado project file |
 | `hardware/RAPID.srcs/sources_1/new/stepperDriver.vhd` | **Active** stepper FSM VHDL |
 | `hardware/RAPID.srcs/sources_1/new/spindle.vhd` | **Active** BLDC 6-step commutation VHDL |
@@ -44,6 +48,7 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 | `requirements.txt` | Python deps: PySide6, pyqtgraph, numpy, colorama |
 | `docs/README.md` | User-facing project documentation |
 | `docs/CLAUDE.md` | This file — full technical context |
+| `docs/ISSUES.md` | Known issues, risks, and open TODOs |
 
 ---
 
@@ -55,6 +60,8 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 - **PS Clock:** FCLK_CLK0 = 100 MHz (AXI interconnect)
 - **PL Clock:** 125 MHz from clk_wiz (feeds stepperDriver and Spindle)
 - **UART:** PS UART0, 115200 8N1, over USB-JTAG/UART
+- **I2C:** PS I2C0 via EMIO → Arduino-compatible header A4/A5 (SDA=P16, SCL=P15)
+- **Vitis note:** Vitis 2025.1 uses SDT flow — `XPAR_<PERIPH>_0_DEVICE_ID` does not exist; use `XPAR_<PERIPH>_0_BASEADDR` with `LookupConfig(u32 BaseAddress)`
 
 ---
 
@@ -109,9 +116,10 @@ Defined and written in `vitis_workspace/systemControl/systemControl.c`:
 
 | Phase | Code action |
 |-------|------------|
+| **0 — MLX init** | `mlx_init(&mlx, XPAR_XIICPS_0_BASEADDR)` — configures I2C0 and MLX90393; emits `[MLX] ready.` or `[MLX] init FAILED` |
 | **1 — Zeroing** | Write `stepper_en=1` → VHDL enters ZEROING state, sled moves to inner edge; `usleep(ZERO_WAIT_US)` (default 30 s) waits for proximity switch to trigger |
 | **2 — Spindle** | Set `spindle_en=1` |
-| **3 — Point loop** | For each `TYPE_POINT`: compute `target_step`, update `dir`+`num_steps`, pulse `step_go`, wait, turn laser on after first move, send ACK |
+| **3 — Point loop** | For each `TYPE_POINT`: compute `target_step`, update `dir`+`num_steps`, pulse `step_go`, wait, turn laser on after first move, read MLX90393 angle → `debug_printf("[THETA] %.2f deg")`, send ACK |
 | **4 — End** | On `TYPE_END`: clear `laser_en`, `spindle_en`, `stepper_en`, send ACK, return |
 
 **Step-count mapping (fixed physical scale):**
@@ -236,6 +244,8 @@ All I/O banks run at 3.3 V (LVCMOS33). `clk`, `en`, `dir` are internal PS/PL sig
 | `en_out_0` | V17 | Stepper enable (DRV8834 SLEEP) |
 | `prox_in_0` | R17 | Proximity switch input (PULLDOWN) |
 | `LaserEn[0]` | P18 | Laser enable output (PULLDOWN) |
+| `IIC_0_0_scl_io` | P15 | I2C0 SCL (Arduino A5) — MLX90393 |
+| `IIC_0_0_sda_io` | P16 | I2C0 SDA (Arduino A4) — MLX90393 |
 
 ---
 
@@ -290,8 +300,35 @@ Note: uses `PI = 3.14159` (not `M_PI`).
 
 ---
 
+## MLX90393 Magnetometer Driver
+
+`vitis_workspace/systemControl/mlx90393.h` / `mlx90393.c`
+
+Bare-metal I2C driver for spindle angle logging. Reads XY axes only; angle is emitted as a `[THETA] %.2f deg` TYPE_DEBUG packet after each stepper move. No closed-loop control yet.
+
+**Sensor config:** OSR=3, DIG_FILT=3, GAIN_SEL=5, RES_X/Y=0 (CONF1=0x5F, CONF3=0x0000).
+
+**Calibration constants** (from `old/angleMeasure.ino` test setup):
+```c
+X_OFFSET = -47.5498    Y_OFFSET = -23.2500
+X_SCALE  =  0.00010226 Y_SCALE  =  0.00010226
+ANGLE_DIVISOR = 1.54   /* mechanical coupling */
+```
+
+**Angle algorithm:** cross/dot product of consecutive calibrated XY vectors → `atan2f` → accumulate. Handles 0°/360° wrap correctly.
+
+**I2C address:** 0x0C (A0/A1 to GND). **Bus:** 100 kHz. External 4.7 kΩ pull-ups on SCL and SDA required.
+
+**TODO:** Integration not yet hardware-tested. See `docs/ISSUES.md` (I-1 through I-4) for known risks before running.
+
+---
+
 ## Known Issues / Active Development Notes
+
+Full issue tracker: `docs/ISSUES.md`
 
 1. **`step_total_out` readback:** GPIO channel 2 is configured as input for position readback, but the connection from `step_total_out` to GPIO channel 2 in the block design needs verification.
 
-2. **Spindle runs open-loop:** No encoder feedback; rotor position is assumed from timing only. The `theta_deg` value in each point packet is received and available in `systemControl.c` but not yet used to command the spindle to a specific angle. Full theta control requires adding an encoder and position feedback loop.
+2. **Spindle runs open-loop:** No encoder feedback; rotor position is assumed from timing only. The `theta_deg` value in each point packet is received and available in `systemControl.c` but not yet used to command the spindle to a specific angle. Full theta control requires closed-loop feedback from the MLX90393 (not yet implemented).
+
+3. **MLX90393 integration untested:** Driver code is complete but has not been run on hardware. See `docs/ISSUES.md` for risks (bus hang, calibration, bit-layout verification).
