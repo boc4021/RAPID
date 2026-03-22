@@ -110,11 +110,13 @@ int mlx_init(MLX90393 *dev, u32 iic_baseaddr)
         return XST_FAILURE;
 
     /* EX — exit any in-progress measurement and return to idle */
-    mlx_cmd(dev, MLX_CMD_EX);
+    if (mlx_cmd(dev, MLX_CMD_EX) & 0x10u)
+        return XST_FAILURE;
     usleep(10000);   /* 10 ms */
 
     /* RT — full reset, restore OTP defaults (datasheet: max ~5 ms) */
-    mlx_cmd(dev, MLX_CMD_RT);
+    if (mlx_cmd(dev, MLX_CMD_RT) & 0x10u)
+        return XST_FAILURE;
     usleep(10000);   /* 10 ms */
 
     /*

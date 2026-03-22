@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 
-#define PI 3.14159
+#define PI 3.14159265358979323846
 
 /*
 UNITS ARE IN UM (micrometres)

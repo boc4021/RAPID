@@ -21,8 +21,8 @@
 #   input.gds   - default input file
 #
 # Note:
-#   src/fpgaCommunication.c and src/fgpaConfiguration.c target the Zynq PS
-#   bare-metal environment and must be built inside Xilinx Vitis / SDK, not here.
+#   vitis_workspace/systemControl/systemControl.c targets the Zynq PS bare-metal
+#   environment and must be built inside Xilinx Vitis, not here.
 # =============================================================================
 
 # ---- Toolchain ---------------------------------------------------------------

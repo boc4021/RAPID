@@ -60,6 +60,7 @@ begin
 --10,309,278 gives 12.13 Hz = ~1 rotation every 3 seconds - slightly jerky
 --9,387,908 gives 13.32 Hz = 1 rotation every 2.6 seconds
 --6,410,256 gives ~14.5 Hz = 1 rotation everhy 1.8 seconds
+-- double check this? 125MHz / 6.4e6 = 19.5 not 14.5
 --3,205,128 gives ~39 Hz = 1 RPS
 count_max <= 6410256; --14.5Hz - Smoothest/slowest
 
@@ -108,7 +109,7 @@ begin
     end if;
 end process;
 
-process(clk) --logic for initial startup allign phase
+process(clk) --logic for initial startup align phase
 begin
     if rising_edge(clk) then
         if en = '0' then

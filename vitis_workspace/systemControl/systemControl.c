@@ -99,7 +99,8 @@
 /*
  * How long to wait after asserting stepper_en for the VHDL ZEROING state
  * to drive the sled to the proximity switch and reset step_total to 0.
- * At the VHDL homing rate of ~50 steps/s, 30 s covers 1500 steps.
+ * At the VHDL homing rate of 500 steps/s (zero_freq=250000 @ 125 MHz),
+ * 30 s covers 15,000 steps — more than enough for the full 8,500-step range.
  * Increase ZERO_WAIT_US if the sled may start further from the inner edge.
  */
 #define ZERO_WAIT_US    30000000U   /* 30 seconds */
@@ -349,12 +350,13 @@ int main(void)
 
                 /*
                  * Wait for the move to finish:
-                 *   1200 us   WAKEUP hold (150,000 cycles @ 125 MHz)
-                 *   delta*125 RUNNING at 8 kHz step rate (125 us/step)
-                 *   10000 us  safety margin
-                 * (The 100 ms step_go pulse already elapsed above.)
+                 *   1200 us    WAKEUP hold (150,000 cycles @ 125 MHz) — already
+                 *              elapsed during the 100 ms step_go pulse above
+                 *   delta*2000 RUNNING at 500 Hz step rate (2000 us/step)
+                 *              run_freq=250000 @ 125 MHz → 500 Hz
+                 *   10000 us   safety margin
                  */
-                usleep(1200u + (uint32_t)delta * 125u + 10000u);
+                usleep(1200u + (uint32_t)delta * 2000u + 10000u);
             }
 
             current_step = target_step;

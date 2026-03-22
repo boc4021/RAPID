@@ -236,4 +236,4 @@ The FPGA reads spindle angle via an MLX90393 magnetometer connected to PS I2C0 (
 
 After each stepper move the FPGA emits a `[FPGA] [THETA] X.XX deg` message visible in the GUI log pane. This is logging-only for now; closed-loop theta control is future work (see `docs/ISSUES.md`).
 
-> **Note:** `ZERO_WAIT_US` defaults to 30 s (covers up to ~1500 steps at 50 Hz homing rate). The PC-side constant `FPGA_INIT_WAIT_MS` (32 s) must be ≥ `ZERO_WAIT_US`; update both if you increase the zeroing timeout.
+> **Note:** `ZERO_WAIT_US` defaults to 30 s (covers up to ~15,000 steps at 500 Hz homing rate — more than the full 8,500-step range). The PC-side constant `FPGA_INIT_WAIT_MS` (32 s) must be ≥ `ZERO_WAIT_US`; update both if you increase the zeroing timeout.

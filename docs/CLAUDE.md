@@ -101,7 +101,8 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 
 **Step mapping:** `target_step = clamp(round(r_um / 33000 × 8500), 0, 8500)` — 8500 steps = 33 mm.
 
-**Move wait:** `usleep(1200 + delta × 125 + 10000)` µs after 100 ms `step_go` pulse.
+**Move wait:** `usleep(1200 + delta × 2000 + 10000)` µs after 100 ms `step_go` pulse.
+(`run_freq=250000` @ 125 MHz → 500 Hz step rate = 2000 µs/step)
 
 ```c
 #define ZERO_WAIT_US      30000000U   /* 30 s — increase if sled starts far from home */
@@ -138,7 +139,7 @@ ZEROING → (prox_stable) → IDLE → (step_go↑) → WAKEUP → RUNNING → D
 125 MHz. Drives DRV8323. Fixed speed, fixed direction, on/off via `en`. Key ports: `en`, `en_spindle`, `INHA/INLA/INHB/INLB/INHC/INLC`.
 
 - `INHC <= '0'`, `INLC <= '1'`, `en_spindle <= '1'` — hardcoded
-- Commutation at `count_max = 6,410,256` → ~14.5 Hz (~1 rev/1.8 s)
+- Commutation at `count_max = 6,410,256` → ~19.5 Hz commutation rate (~3.25 rev/s, ~195 RPM)
 - PWM on `INHA` at ~10 kHz, 50% duty
 - 1.5 s rotor alignment hold on `en` rising edge (187,500,000 cycles)
 
@@ -197,7 +198,7 @@ XY <x0> : <y0>
 ENDEL
 ```
 
-Units: micrometres (integers). `convertToPolar()`: `r = sqrt(x²+y²)`, `theta = atan2(y,x)` normalized to [0, 360). Uses `PI = 3.14159` (not `M_PI`).
+Units: micrometres (integers). `convertToPolar()`: `r = sqrt(x²+y²)`, `theta = atan2(y,x)` normalized to [0, 360). Uses `PI = 3.14159265358979323846` (full double precision).
 
 ---
 

@@ -37,14 +37,10 @@ The `while (XIicPs_BusIsBusy(...)) {}` spin loop in `mlx90393.c` has no timeout.
 ### I-4: SCL/SDA pin assignment unverified against board schematic
 XDC uses `SCL=P15` (A5), `SDA=P16` (A4) from the Digilent master constraints file. Verify against the physical board schematic before generating a bitstream.
 
-### I-5: EX and RT status not checked in `mlx_init`
-`mlx_cmd(EX)` and `mlx_cmd(RT)` return values are discarded. A failed reset leaves the sensor in an unknown state before CONF writes.
-**Fix (F-5):** check that `mlx_cmd(RT)` returns `0x01` (RESET status); return `XST_FAILURE` if not.
-
-### I-6: Angle accumulator has no absolute reference
+### I-5: Angle accumulator has no absolute reference
 `accumulated_angle` integrates deltas from power-on. Noise accumulates without bound, and a re-init resets the counter to 0° regardless of spindle position. This is acceptable for logging-only use but must be addressed before closed-loop control.
 
-### I-7: 10 ms conversion wait is tied to CONF3 settings
+### I-6: 10 ms conversion wait is tied to CONF3 settings
 The `usleep(10000)` in `mlx_read_angle` assumes DIG_FILT=3, OSR=3 (~6 ms conversion). If CONF3 changes, this wait must be updated or stale data will be read. See also F-2.
 
 ---
@@ -60,5 +56,3 @@ Replace the `usleep(10000)` in `mlx_read_angle` with polling the DRDY status bit
 ### F-3: MLX90393 bus-hang timeout — see I-1
 
 ### F-4: Verify `step_total_out` → GPIO ch2 — see H-1
-
-### F-5: Check RT/EX status in `mlx_init` — see I-5
