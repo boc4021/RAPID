@@ -4,10 +4,12 @@
  * See mlx90393.h for wiring and usage notes.
  *
  * Protocol summary (Melexis MLX90393 datasheet):
- *   All commands: master writes 1-byte opcode; sensor replies with 1-byte status.
- *   WR command:   [0x60|(reg<<2), data_hi, data_lo, reg<<2] then read 1 status byte.
- *   SM command:   [0x36] then read 1 status byte; wait for conversion (~6 ms).
- *   RM command:   [0x46] then read 7 bytes: [status, T_H, T_L, X_H, X_L, Y_H, Y_L].
+ *   All commands: master writes opcode bytes; sensor replies with 1-byte status.
+ *   WR command:   [0x60, data_hi, data_lo, reg<<2] then read 1 status byte.
+ *                 Command byte is always 0x60; register is in the last byte.
+ *   SM command:   [0x37] (T+X+Y) then read 1 status byte; wait ~6 ms for conversion.
+ *   RM command:   [0x47] then read 7 bytes: [status, T_H, T_L, X_H, X_L, Y_H, Y_L].
+ *                 T is included (mask 0x07) so X/Y land at byte offsets 3 and 5.
  *   Data is signed 16-bit big-endian.
  *
  * Angle tracking algorithm mirrors tests/anglemeasure.ino:
@@ -52,17 +54,20 @@ static uint8_t mlx_cmd(MLX90393 *dev, uint8_t cmd)
 /*
  * mlx_write_reg - write a 16-bit value to an MLX90393 configuration register.
  *
- * WR transaction: [0x60|(reg<<2), data_high, data_low, reg<<2]
- * Then read back 1 status byte.
+ * WR transaction (4 bytes written, then 1 status byte read):
+ *   [0x60, data_high, data_low, reg<<2]
+ * The command byte is always 0x60 (MLX_CMD_WR); the register address is
+ * encoded in the last byte as reg<<2.  Do NOT OR reg<<2 into the command
+ * byte — that corrupts the opcode for any non-zero register.
  * Returns status byte, or 0xFF on I2C error.
  */
 static uint8_t mlx_write_reg(MLX90393 *dev, uint8_t reg, uint16_t val)
 {
     uint8_t buf[4] = {
-        (uint8_t)(MLX_CMD_WR | (uint8_t)(reg << 2)),
+        MLX_CMD_WR,              /* 0x60 — always the plain WR opcode */
         (uint8_t)(val >> 8),
         (uint8_t)(val & 0xFFu),
-        (uint8_t)(reg << 2)
+        (uint8_t)(reg << 2)      /* register address in final byte */
     };
     uint8_t status;
 

@@ -1,78 +1,64 @@
 # RAPID — Known Issues & Open Work
 
-This file tracks hardware bugs, software risks, and planned future work.
-It is separate from `README.md` (which covers project summary, setup, and usage only).
-
 ---
 
 ## Active Hardware Issues
 
+### H-0: Duplicate entity `Spindle` in active source set
+`sources_1/new/BLDC.vhd` and `sources_1/new/spindle.vhd` both declare `entity Spindle`. If both are active, Vivado will fail with a duplicate entity error. `BLDC.vhd` is a superseded draft with an abstract `PhA/PhB/PhC` interface incompatible with the XDC.
+**Fix:** right-click `BLDC.vhd` in Vivado Sources → **Disable File**, or remove it from the project.
+
 ### H-1: `step_total_out` → GPIO channel 2 wiring unverified
-The `step_total_out` port of `stepperDriver.vhd` is intended to feed back the
-absolute stepper position to the PS via AXI GPIO channel 2.  The connection in
-the Vivado block design has not been verified end-to-end.  Until confirmed,
-`XGpio_DiscreteRead(&gpio, 2)` may not return meaningful position data.
+The connection from `stepperDriver.vhd`'s `step_total_out` to AXI GPIO channel 2 in the block design has not been confirmed end-to-end. `XGpio_DiscreteRead(&gpio, 2)` may not return valid position data until verified.
 
 ---
 
 ## Active Software Issues
 
 ### S-1: Spindle runs open-loop
-`theta_deg` in each `TYPE_POINT` packet is received and available in
-`systemControl.c` but is not yet used to command the spindle to a specific
-angular position.  The spindle runs at a fixed speed and the angle is assumed
-from timing only.  Full theta control requires closed-loop feedback.
+`theta_deg` from each `TYPE_POINT` packet is available in `systemControl.c` but not used to command the spindle. The spindle runs fixed speed; full theta control requires closed-loop MLX90393 feedback (not yet implemented).
 
 ---
 
 ## I2C / MLX90393 Integration Risks
 
 ### I-1: Bus hang on `XIicPs_BusIsBusy`
-`mlx90393.c` uses a bare spin loop (`while (XIicPs_BusIsBusy(...)) {}`) between
-I2C send and receive.  If the bus never releases — due to missing pull-up
-resistors, incorrect EMIO routing, or a sensor lockup — the system hangs
-silently with no timeout or error recovery.
-**Mitigation:** add a counter and return `XST_FAILURE` after N iterations if
-the bus remains busy.
+The `while (XIicPs_BusIsBusy(...)) {}` spin loop in `mlx90393.c` has no timeout. A missing pull-up, bad EMIO routing, or sensor lockup will hang the system silently.
+**Fix (F-3):** add an iteration counter; return `XST_FAILURE` after N cycles.
 
-### I-2: CONF1 bit layout assumption
-The CONF1 register value `0x5F` is computed assuming:
-`GAIN_SEL[6:4] = 5`, `DIG_FILT[3:2] = 3`, `OSR[1:0] = 3`.
-This matches the Adafruit_MLX90393 library and the Melexis MLX90393EF datasheet
-rev 1.0.  Some earlier or later silicon revisions define bits differently.
-**Mitigation:** verify against the datasheet for the specific part on the PCB.
+### I-2: CONF1 direct write may clobber OTP bits
+`mlx_init` writes `0x0050` directly to CONF1 without a read-modify-write. After RT reset the OTP defaults likely have bits [3:0] = 0, making this safe — but it has not been verified against the specific part's OTP.
+**Mitigation:** if unexpected init behaviour is seen, add a read-modify-write for CONF1.
 
 ### I-3: Calibration constants are setup-specific
-`MLX_X_OFFSET`, `MLX_Y_OFFSET`, `MLX_X_SCALE`, `MLX_Y_SCALE` were measured in
-the original Arduino test setup (`tests/old/anglemeasure.ino`).  If the sensor
-is mounted in a different position relative to the spindle magnet, or a
-different magnet is used, these values will produce incorrect angles.
-**Mitigation:** run a calibration pass before relying on absolute angle values.
+`MLX_X/Y_OFFSET` and `MLX_X/Y_SCALE` were measured in the original Arduino test rig (`old/angleMeasure.ino`). A different sensor mount position or magnet will produce wrong angles.
+**Mitigation:** run a calibration pass before relying on angle values.
 
-### I-4: SCL/SDA pin assignment assumes Digilent master XDC mapping
-The XDC constraints use `SCL = P15` (Arduino A5) and `SDA = P16` (Arduino A4)
-taken from the Digilent Arty Z7-20 master constraints file.  Verify these pin
-numbers against the board schematic before generating a new bitstream.
+### I-4: SCL/SDA pin assignment unverified against board schematic
+XDC uses `SCL=P15` (A5), `SDA=P16` (A4) from the Digilent master constraints file. Verify against the physical board schematic before generating a bitstream.
+
+### I-5: EX and RT status not checked in `mlx_init`
+`mlx_cmd(EX)` and `mlx_cmd(RT)` return values are discarded. A failed reset leaves the sensor in an unknown state before CONF writes.
+**Fix (F-5):** check that `mlx_cmd(RT)` returns `0x01` (RESET status); return `XST_FAILURE` if not.
+
+### I-6: Angle accumulator has no absolute reference
+`accumulated_angle` integrates deltas from power-on. Noise accumulates without bound, and a re-init resets the counter to 0° regardless of spindle position. This is acceptable for logging-only use but must be addressed before closed-loop control.
+
+### I-7: 10 ms conversion wait is tied to CONF3 settings
+The `usleep(10000)` in `mlx_read_angle` assumes DIG_FILT=3, OSR=3 (~6 ms conversion). If CONF3 changes, this wait must be updated or stale data will be read. See also F-2.
 
 ---
 
 ## Future Work
 
 ### F-1: Closed-loop spindle theta control
-Once the MLX90393 angle logging is verified, the next step is a feedback loop:
-compare measured angle to the `theta_deg` target in each `TYPE_POINT` packet
-and adjust spindle timing or speed accordingly.
+Use MLX90393 angle feedback to command the spindle to the `theta_deg` target in each `TYPE_POINT` packet.
 
 ### F-2: DRDY polling instead of fixed wait
-`mlx_read_angle()` uses `usleep(10000)` after the SM command.  Replacing this
-with polling the DRDY bit in the status byte would reduce latency (current
-conversion is ~6 ms; worst case with margin is ~10 ms as coded).
+Replace the `usleep(10000)` in `mlx_read_angle` with polling the DRDY status bit to reduce per-sample latency. Resolves I-7 dependency on CONF3 settings.
 
-### F-3: MLX90393 bus-hang timeout
-See I-1 above.  Add a maximum iteration count to the `XIicPs_BusIsBusy` loops
-in `mlx90393.c` to prevent silent hangs.
+### F-3: MLX90393 bus-hang timeout — see I-1
 
-### F-4: Stepper position readback verification
-See H-1 above.  Verify the `step_total_out` → GPIO ch2 connection in the Vivado
-block design and confirm that `XGpio_DiscreteRead(&gpio, 2)` returns the correct
-stepper position after each move.
+### F-4: Verify `step_total_out` → GPIO ch2 — see H-1
+
+### F-5: Check RT/EX status in `mlx_init` — see I-5

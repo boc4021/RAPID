@@ -28,23 +28,39 @@
 /* ---- Command opcodes ---- */
 #define MLX_CMD_EX           0x80u   /* Exit — return to idle */
 #define MLX_CMD_RT           0xF0u   /* Reset — restore OTP defaults */
-#define MLX_CMD_SM_XY        0x36u   /* Start single measurement: X+Y axes (mask 0x06) */
-#define MLX_CMD_RM_XY        0x46u   /* Read measurement: X+Y */
-#define MLX_CMD_WR           0x60u   /* Write register (OR with reg<<2) */
+/*
+ * Axis bits (in SM/RM opcode low nibble): T=0x01, X=0x02, Y=0x04, Z=0x08.
+ * Reading T+X+Y (mask 0x07) produces a 7-byte RM response:
+ *   [status, T_H, T_L, X_H, X_L, Y_H, Y_L]
+ * T is read but discarded; its presence is required to keep X/Y at the
+ * expected byte offsets (3 and 5).  Using X+Y only (mask 0x06) would return
+ * only 5 bytes and shift X/Y to offsets 1 and 3 — mismatching the parser.
+ */
+#define MLX_CMD_SM_XY        0x37u   /* Start single measurement: T+X+Y axes (mask 0x07) */
+#define MLX_CMD_RM_XY        0x47u   /* Read measurement: T+X+Y — returns 7 bytes */
+#define MLX_CMD_WR           0x60u   /* Write register */
 
 /* ---- Configuration register addresses ---- */
 #define MLX_REG_CONF1        0x00u
 #define MLX_REG_CONF3        0x02u
 
 /*
- * CONF1: GAIN_SEL[6:4]=5, DIG_FILT[3:2]=3, OSR[1:0]=3
- * = (5<<4)|(3<<2)|3 = 0x50|0x0C|0x03 = 0x5F
- * Matches Adafruit_MLX90393 library defaults.
+ * CONF1 (reg 0x00): gain only.
+ *   GAIN_SEL[6:4] = 5  → 1.667x gain  (5 << 4 = 0x50)
+ *   Bits [3:0] left 0 (OTP reset defaults).
+ *
+ * CONF3 (reg 0x02): filter, oversampling, resolution.
+ *   DIG_FILT[4:2] = 3  (3 << 2 = 0x0C)
+ *   OSR[1:0]      = 3  (        0x03)
+ *   RES_X/Y/Z     = 0  (16-bit, default)
+ *   Combined: 0x0C | 0x03 = 0x000F
+ *
+ * Note: DIG_FILT and OSR belong in CONF3, not CONF1.
+ * Conversion time at DIG_FILT=3, OSR=3 is ~6 ms (see datasheet Table 18);
+ * mlx_read_angle waits 10 ms to include margin.
  */
-#define MLX_CONF1_VALUE      0x005Fu
-
-/* CONF3: RES_X[11:10]=0, RES_Y[9:8]=0, RES_Z[7:6]=0 — max 16-bit resolution */
-#define MLX_CONF3_VALUE      0x0000u
+#define MLX_CONF1_VALUE      0x0050u  /* GAIN_SEL[6:4]=5 */
+#define MLX_CONF3_VALUE      0x000Fu  /* DIG_FILT[4:2]=3, OSR[1:0]=3, RES=0 */
 
 /* ---- Calibration — identical to tests/anglemeasure.ino ---- */
 #define MLX_X_OFFSET         (-47.5498f)
