@@ -48,7 +48,7 @@ FILE    := input.gds
 
 # ==============================================================================
 
-.PHONY: all clean run gui
+.PHONY: all clean run gui e2e
 
 all: $(TARGET)
 
@@ -82,6 +82,10 @@ gui:
 	else \
 		$(SYSTEM_PYTHON) src/gui.py; \
 	fi
+
+# End-to-end test: requires com0com + pyserial (see tests/e2e_test.py)
+e2e: $(TARGET)
+	$(MAKE) -C tests e2e
 
 # Remove all build artefacts
 clean:

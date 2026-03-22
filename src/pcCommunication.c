@@ -413,9 +413,14 @@ int main(int argc, char **argv) {
 
     /* ---- wait for FPGA stepper initialization (zeroing to proximity switch) ---- */
     printf("Disc radius: %d um, max steps: 8500\n", DISC_RADIUS_UM);
-    printf("Waiting %d s for FPGA stepper initialization (zeroing to proximity switch)...\n",
-           FPGA_INIT_WAIT_MS / 1000);
-    Sleep(FPGA_INIT_WAIT_MS);
+    {
+        /* RAPID_INIT_WAIT_MS env var overrides the default wait; set to 0 for testing. */
+        const char *env = getenv("RAPID_INIT_WAIT_MS");
+        DWORD wait_ms = (env != NULL) ? (DWORD)atoi(env) : FPGA_INIT_WAIT_MS;
+        printf("Waiting %lu ms for FPGA stepper initialization (zeroing to proximity switch)...\n",
+               (unsigned long)wait_ms);
+        Sleep(wait_ms);
+    }
 
     /* ---- send points with stop-and-wait flow control ---- */
     printf("Sending %zu polar points over %s...\n", count, port_name);
