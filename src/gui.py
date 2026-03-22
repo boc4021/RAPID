@@ -138,7 +138,7 @@ class GUI(QWidget):
 
     def _build_test_row(self, parent):
         row = QHBoxLayout()
-        self.sim_port = QLineEdit("COM10")
+        self.sim_port = QLineEdit("COM4")
         self.sim_port.setFixedWidth(70)
         self.btn_run_test  = QPushButton("Run E2E Test")
         self.btn_stop_test = QPushButton("Stop Test")

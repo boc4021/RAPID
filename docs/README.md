@@ -179,17 +179,17 @@ Defaults to `PORT=COM25` and `FILE=input.gds` if not specified.
 The test launches `fpga_sim.py` (a software FPGA simulator) and `RAPID.exe` connected through a real virtual COM port pair, and verifies that every point in a small GDS file is acknowledged correctly.
 
 **Setup (one-time):**
-1. Install [com0com](https://com0com.sourceforge.net/) and create a port pair (e.g. `COM10 ↔ COM11`)
+1. Install [com0com](https://com0com.sourceforge.net/) and create a port pair (e.g. `COM4 ↔ COM6`)
 2. `pip install pyserial`
 
 **Run:**
 ```
-make e2e SIM_PORT=COM10 PC_PORT=COM11
+make e2e SIM_PORT=COM4 PC_PORT=COM6
 ```
 
 Or directly:
 ```
-python tests/e2e_test.py --sim-port COM10 --pc-port COM11
+python tests/e2e_test.py --sim-port COM4 --pc-port COM6
 ```
 
 ### 5 - Clean build artefacts
@@ -219,7 +219,7 @@ CRC8 is computed as XOR over `[TYPE, LEN, PAYLOAD...]`.
 
 **Flow control:** Stop-and-wait. The PC waits 32 s at startup for FPGA stepper zeroing to complete (`FPGA_INIT_WAIT_MS`, matches FPGA's `ZERO_WAIT_US`), then up to 2 s for each point ACK, then up to 2 s for the end ACK.
 
-> **When changing protocol constants or disc geometry**, update `src/protocol.h`, then sync `vitis_workspace/systemControl/protocol.h` and the constants block at the top of `tests/fpga_sim.py`.
+> **When changing protocol constants or disc geometry**, update `src/protocol.h`, then sync `vitis_workspace/systemControl/protocol.h` and the constants block at the top of `tests/fpga_sim.py`. Run `make check-proto` to verify the C copies are in sync.
 
 ---
 

@@ -20,7 +20,7 @@ The connection from `stepperDriver.vhd`'s `step_total_out` to AXI GPIO channel 2
 
 ### S-2: `protocol.h` sync is manual — drift risk
 `src/protocol.h` (PC), `vitis_workspace/systemControl/protocol.h` (FPGA copy), and the constants block at the top of `tests/fpga_sim.py` must be kept identical by hand. There is no automated check. If any one copy drifts, framing will silently misparse packets — CRC mismatches are likely but not guaranteed (e.g. a changed `POINT_LEN` would not affect the CRC).
-**Mitigation:** run `diff src/protocol.h vitis_workspace/systemControl/protocol.h` before each Vitis build. A `make check-proto` target would automate this.
+**Mitigation:** run `make check-proto` before each Vitis build — it diffs the `#define` lines between both copies and fails if they diverge.
 
 ### S-3: `FPGA_INIT_WAIT_MS` and `ZERO_WAIT_US` are not compile-time coupled
 The PC-side `FPGA_INIT_WAIT_MS` (32 000 ms, in `pcCommunication.c`) must always exceed the FPGA-side `ZERO_WAIT_US` (30 000 000 µs = 30 s, in `systemControl.c`). The two values live in different files and different build environments with no shared assertion. If `ZERO_WAIT_US` is increased without also updating `FPGA_INIT_WAIT_MS`, the PC will start sending packets before the FPGA finishes zeroing, causing the first points to be silently dropped.

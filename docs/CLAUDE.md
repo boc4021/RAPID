@@ -39,6 +39,7 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 | `tests/fpga_sim.py` | Software FPGA simulator — opens COM port, parses packets, sends ACKs |
 | `tests/e2e_test.py` | E2E test runner — launches both sides, verifies all ACKs arrive |
 | `tests/fixtures/e2e_small.gds` | 3-point GDS for fast E2E runs |
+| `pointGenerator.py` | Generates sample GDS2 input (circle of N points at radius R) |
 | `old/angleMeasure.ino` | Archived Arduino angle-tracking sketch (calibration reference) |
 | `hardware/RAPID.xpr` | Vivado project file |
 | `hardware/RAPID.srcs/sources_1/new/stepperDriver.vhd` | **Active** stepper FSM |
@@ -191,7 +192,8 @@ All banks 3.3 V LVCMOS33.
 make                         # builds build/RAPID.exe
 make run PORT=COM25 FILE=input.gds
 make gui                     # launches src/gui.py
-make e2e SIM_PORT=COM10 PC_PORT=COM11  # E2E protocol test (requires com0com + pyserial)
+make e2e SIM_PORT=COM4 PC_PORT=COM6  # E2E protocol test (requires com0com + pyserial)
+make check-proto             # verify src/ and vitis_workspace/ protocol.h are in sync
 make clean
 ```
 
@@ -229,7 +231,7 @@ Human-readable lines (`[ACK] ...`, `[FPGA] ...`) are always emitted alongside fo
 
 All wire-protocol and physical constants live in **`src/protocol.h`** (PC side). The Vitis build has an identical copy at `vitis_workspace/systemControl/protocol.h`. `tests/fpga_sim.py` mirrors the same values in Python with a comment pointing here.
 
-**When changing constants:** update `src/protocol.h` → copy to `vitis_workspace/systemControl/protocol.h` → update the constants block in `tests/fpga_sim.py`.
+**When changing constants:** update `src/protocol.h` → copy to `vitis_workspace/systemControl/protocol.h` → update the constants block in `tests/fpga_sim.py`. Run `make check-proto` to verify the C copies are in sync.
 
 ---
 

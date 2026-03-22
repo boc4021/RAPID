@@ -7,12 +7,12 @@
 #   - RAPID.exe built: make (from project root)
 #
 # Usage:
-#   make e2e                              - run with default ports (COM10/COM11)
+#   make e2e                              - run with default ports (COM4/COM6)
 #   make e2e SIM_PORT=COM4 PC_PORT=COM5  - custom port pair
 # =============================================================================
 
-SIM_PORT ?= COM10
-PC_PORT  ?= COM11
+SIM_PORT ?= COM4
+PC_PORT  ?= COM6
 
 .PHONY: e2e
 

@@ -7,12 +7,12 @@ in the GDS file is acknowledged correctly.
 
 Setup (one-time):
   1. Install com0com: https://com0com.sourceforge.net/
-     In the com0com Setup UI, create a pair — e.g. COM10 <-> COM11.
+     In the com0com Setup UI, create a pair — e.g. COM4 <-> COM6.
   2. pip install pyserial
 
 Usage:
   python tests/e2e_test.py                              # defaults below
-  python tests/e2e_test.py --sim-port COM10 --pc-port COM11
+  python tests/e2e_test.py --sim-port COM4 --pc-port COM6
   python tests/e2e_test.py --gds tests/fixtures/e2e_small.gds
 
 The env var RAPID_INIT_WAIT_MS is set to 0 automatically so RAPID.exe skips
@@ -65,9 +65,9 @@ def drain(proc: subprocess.Popen, lines: list, prefix: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="RAPID end-to-end test")
-    parser.add_argument("--sim-port", default="COM10",
+    parser.add_argument("--sim-port", default="COM4",
                         help="COM port for fpga_sim.py (FPGA side)")
-    parser.add_argument("--pc-port",  default="COM11",
+    parser.add_argument("--pc-port",  default="COM6",
                         help="COM port for RAPID.exe  (PC side)")
     parser.add_argument("--gds",      default="tests/fixtures/e2e_small.gds",
                         help="GDS input file")
@@ -76,6 +76,9 @@ def main() -> int:
     args = parser.parse_args()
 
     # ---- Validate --------------------------------------------------------
+    args.rapid = os.path.abspath(args.rapid)
+    args.gds   = os.path.abspath(args.gds)
+
     if not os.path.exists(args.rapid):
         print(f"ERROR: {args.rapid} not found — run 'make' first.", file=sys.stderr)
         return 1
@@ -97,7 +100,8 @@ def main() -> int:
     print("=" * 60)
 
     # ---- Start FPGA simulator --------------------------------------------
-    sim_cmd = [sys.executable, "tests/fpga_sim.py", args.sim_port]
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sim_cmd = [sys.executable, os.path.join(script_dir, "fpga_sim.py"), args.sim_port]
     sim_proc = subprocess.Popen(
         sim_cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

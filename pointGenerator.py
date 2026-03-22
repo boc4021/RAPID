@@ -19,3 +19,4 @@ for i in range(N):
 print("XY", points[0][0], ":", points[0][1])
 for x, y in points[1:]:
     print(f"{x}: {y}")
+print("ENDEL")

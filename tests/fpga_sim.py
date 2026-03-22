@@ -21,9 +21,9 @@ Requirements:
     pip install pyserial
     A virtual COM port pair connected to the port used by RAPID.exe.
     On Windows: com0com (https://com0com.sourceforge.net/) creates pairs.
-    Example: com0com creates COM10 <-> COM11
-      Simulator: python tests/fpga_sim.py COM10
-      RAPID.exe: RAPID_INIT_WAIT_MS=0 build/RAPID.exe COM11 tests/fixtures/e2e_small.gds
+    Example: com0com creates COM4 <-> COM6
+      Simulator: python tests/fpga_sim.py COM4
+      RAPID.exe: RAPID_INIT_WAIT_MS=0 build/RAPID.exe COM6 tests/fixtures/e2e_small.gds
 """
 
 import sys
@@ -195,7 +195,7 @@ def run(port_name: str) -> int:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(f"Usage: python {sys.argv[0]} <COM_PORT>")
-        print("Example: python tests/fpga_sim.py COM10")
+        print("Example: python tests/fpga_sim.py COM4")
         sys.exit(1)
 
     sys.exit(run(sys.argv[1]))

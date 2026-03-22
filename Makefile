@@ -48,7 +48,7 @@ FILE    := input.gds
 
 # ==============================================================================
 
-.PHONY: all clean run gui e2e
+.PHONY: all clean run gui e2e check-proto
 
 all: $(TARGET)
 
@@ -80,10 +80,17 @@ gui:
 	fi
 
 # End-to-end test: requires com0com + pyserial (see tests/e2e_test.py)
-SIM_PORT ?= COM10
-PC_PORT  ?= COM11
+SIM_PORT ?= COM4
+PC_PORT  ?= COM6
 e2e: $(TARGET)
 	$(MAKE) -C tests e2e SIM_PORT=$(SIM_PORT) PC_PORT=$(PC_PORT)
+
+# Verify protocol.h copies are in sync (comments may differ; only #define lines matter)
+check-proto:
+	@diff <(grep '^#define' src/protocol.h) \
+	      <(grep '^#define' vitis_workspace/systemControl/protocol.h) \
+	  && echo "protocol.h: PC and FPGA copies are in sync." \
+	  || { echo "ERROR: protocol.h copies have diverged! Update both files."; exit 1; }
 
 # Remove all build artefacts
 clean:

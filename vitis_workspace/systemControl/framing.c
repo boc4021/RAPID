@@ -122,24 +122,19 @@ uint8_t receive_packet(uint8_t *out_payload)
         uint8_t type = uart_recv_byte();
         uint8_t len  = uart_recv_byte();
 
-        uint8_t payload[MAX_PAYLOAD];
+        /* read payload directly into caller's buffer */
         for (uint8_t i = 0; i < len; i++)
-            payload[i] = uart_recv_byte();
+            out_payload[i] = uart_recv_byte();
 
         uint8_t rx_crc = uart_recv_byte();
 
-        /* verify CRC over [TYPE, LEN, PAYLOAD...] */
-        uint8_t chk[2 + MAX_PAYLOAD];
-        chk[0] = type;
-        chk[1] = len;
+        /* verify CRC incrementally over [TYPE, LEN, PAYLOAD...] */
+        uint8_t crc = type ^ len;
         for (uint8_t i = 0; i < len; i++)
-            chk[2 + i] = payload[i];
+            crc ^= out_payload[i];
 
-        if (crc8_xor(chk, 2u + len) != rx_crc)
+        if (crc != rx_crc)
             continue;   /* CRC mismatch — drop frame and resync */
-
-        for (uint8_t i = 0; i < len; i++)
-            out_payload[i] = payload[i];
 
         return type;
     }
@@ -151,7 +146,7 @@ uint8_t receive_packet(uint8_t *out_payload)
 
 void debug_printf(const char *fmt, ...)
 {
-    char buf[128];
+    char buf[256];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
