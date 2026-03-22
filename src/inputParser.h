@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// struct for each point
 typedef struct {
     int x;
     int y;

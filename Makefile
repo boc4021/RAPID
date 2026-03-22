@@ -38,7 +38,7 @@ BUILDDIR := build
 TARGET  := $(BUILDDIR)/RAPID.exe
 
 # ---- Sources -----------------------------------------------------------------
-SRCS    := $(SRCDIR)/pcCommunication.c $(SRCDIR)/inputParser.c
+SRCS    := $(SRCDIR)/pcCommunication.c $(SRCDIR)/framing.c $(SRCDIR)/inputParser.c
 OBJS    := $(SRCS:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 DEPS    := $(OBJS:.o=.d)
 
@@ -72,20 +72,18 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 run: $(TARGET)
 	./$(TARGET) $(PORT) $(FILE)
 
-# Launch the Python GUI (activates venv if not already active)
-VENV_PYTHON := venv/Scripts/python
-SYSTEM_PYTHON := python
-
 gui:
 	@if [ -f venv/Scripts/python.exe ]; then \
-		$(VENV_PYTHON) src/gui.py; \
+		venv/Scripts/python src/gui.py; \
 	else \
-		$(SYSTEM_PYTHON) src/gui.py; \
+		python src/gui.py; \
 	fi
 
 # End-to-end test: requires com0com + pyserial (see tests/e2e_test.py)
+SIM_PORT ?= COM10
+PC_PORT  ?= COM11
 e2e: $(TARGET)
-	$(MAKE) -C tests e2e
+	$(MAKE) -C tests e2e SIM_PORT=$(SIM_PORT) PC_PORT=$(PC_PORT)
 
 # Remove all build artefacts
 clean:

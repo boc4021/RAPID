@@ -32,14 +32,25 @@ input.gds  ──►  inputParser  ──►  pcCommunication  ──►  UART  
 ```
 RAPID/
 ├── src/
-│   ├── pcCommunication.c     # PC-side UART sender (compiled -> RAPID.exe)
+│   ├── protocol.h            # Wire protocol constants & disc geometry (single source of truth)
+│   ├── framing.c/h           # CRC, pack/unpack, serial open/write, packet builders
+│   ├── pcCommunication.c     # Reader thread, stop-and-wait flow control, main() (-> RAPID.exe)
 │   ├── inputParser.c/h       # GDS2 parser: XY coordinates -> polar points
 │   ├── platform.c/h          # Xilinx cache init wrappers (shared by FPGA apps)
 │   └── gui.py                # PySide6 real-time visualisation GUI
+├── tests/
+│   ├── fpga_sim.py           # Software FPGA simulator (simulates systemControl.c over serial)
+│   ├── e2e_test.py           # End-to-end test runner — launches both sides, checks all ACKs
+│   ├── Makefile              # make e2e target
+│   └── fixtures/
+│       └── e2e_small.gds     # 3-point GDS file for fast E2E runs
 ├── vitis_workspace/          # Xilinx Vitis workspace (FPGA software)
 │   ├── platform/             # BSP platform project (generated from .xsa)
 │   ├── testControl/          # Test motor/laser controller
 │   └── systemControl/        # Active FPGA app — UART receiver + motor/laser control
+│       ├── protocol.h        # Copy of src/protocol.h (Vitis has isolated include paths)
+│       ├── framing.h/c       # Bare-metal framing layer: CRC, UART I/O, send_frame, receive_packet
+│       ├── systemControl.c   # Init sequence, move_to_step(), point loop, laser/motor control
 │       ├── mlx90393.h/c      # MLX90393 magnetometer I2C driver (angle logging)
 ├── hardware/                 # Xilinx Vivado project files (FPGA hardware)
 │   ├── RAPID.srcs/sources_1/new/
@@ -163,7 +174,25 @@ make run PORT=COM25 FILE=input.gds
 
 Defaults to `PORT=COM25` and `FILE=input.gds` if not specified.
 
-### 4 - Clean build artefacts
+### 4 - Run the E2E protocol test (no hardware required)
+
+The test launches `fpga_sim.py` (a software FPGA simulator) and `RAPID.exe` connected through a real virtual COM port pair, and verifies that every point in a small GDS file is acknowledged correctly.
+
+**Setup (one-time):**
+1. Install [com0com](https://com0com.sourceforge.net/) and create a port pair (e.g. `COM10 ↔ COM11`)
+2. `pip install pyserial`
+
+**Run:**
+```
+make e2e SIM_PORT=COM10 PC_PORT=COM11
+```
+
+Or directly:
+```
+python tests/e2e_test.py --sim-port COM10 --pc-port COM11
+```
+
+### 5 - Clean build artefacts
 
 ```
 make clean
@@ -173,7 +202,7 @@ make clean
 
 ## Packet wire format
 
-Both `pcCommunication.c` and `systemControl.c` use the same framing:
+Both `pcCommunication.c` and `systemControl.c` use the same framing. All constants are defined in `src/protocol.h` (PC) and `vitis_workspace/systemControl/protocol.h` (FPGA — identical copy):
 
 ```
 [ 0xAA | 0x55 | TYPE | LEN | PAYLOAD (LEN bytes) | CRC8 ]
@@ -189,6 +218,8 @@ Both `pcCommunication.c` and `systemControl.c` use the same framing:
 CRC8 is computed as XOR over `[TYPE, LEN, PAYLOAD...]`.
 
 **Flow control:** Stop-and-wait. The PC waits 32 s at startup for FPGA stepper zeroing to complete (`FPGA_INIT_WAIT_MS`, matches FPGA's `ZERO_WAIT_US`), then up to 2 s for each point ACK, then up to 2 s for the end ACK.
+
+> **When changing protocol constants or disc geometry**, update `src/protocol.h`, then sync `vitis_workspace/systemControl/protocol.h` and the constants block at the top of `tests/fpga_sim.py`.
 
 ---
 

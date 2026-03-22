@@ -26,12 +26,19 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 
 | Path | Description |
 |------|-------------|
-| `src/pcCommunication.c` | PC-side UART sender — compiled into `build/RAPID.exe` |
+| `src/protocol.h` | **Single source of truth** — wire protocol constants, packet types, disc geometry |
+| `src/framing.c/h` | CRC-8, little-endian pack/unpack, `open_serial`, `write_all`, packet builders |
+| `src/pcCommunication.c` | Reader thread state machine, stop-and-wait flow control, `main()` → `build/RAPID.exe` |
 | `src/inputParser.c/h` | GDS2 text parser: XY coords → polar (r in µm, theta in degrees) |
 | `src/platform.c/h` | Xilinx cache init wrappers |
-| `src/gui.py` | PySide6 GUI — launches RAPID.exe, parses stdout, plots ACK'd points |
-| `vitis_workspace/systemControl/systemControl.c` | **Active** FPGA app — packet receiver + motor/laser control |
+| `src/gui.py` | PySide6 GUI — launches RAPID.exe, parses structured JSON output, plots ACK'd points |
+| `vitis_workspace/systemControl/protocol.h` | Identical copy of `src/protocol.h` for the Vitis build environment |
+| `vitis_workspace/systemControl/framing.h/.c` | Bare-metal framing layer: CRC-8, unpack, UART I/O, `send_frame`, `receive_packet`, `debug_printf` |
+| `vitis_workspace/systemControl/systemControl.c` | **Active** FPGA app — init sequence, `move_to_step()`, point loop, laser/motor control |
 | `vitis_workspace/systemControl/mlx90393.h/.c` | MLX90393 bare-metal I2C driver |
+| `tests/fpga_sim.py` | Software FPGA simulator — opens COM port, parses packets, sends ACKs |
+| `tests/e2e_test.py` | E2E test runner — launches both sides, verifies all ACKs arrive |
+| `tests/fixtures/e2e_small.gds` | 3-point GDS for fast E2E runs |
 | `old/angleMeasure.ino` | Archived Arduino angle-tracking sketch (calibration reference) |
 | `hardware/RAPID.xpr` | Vivado project file |
 | `hardware/RAPID.srcs/sources_1/new/stepperDriver.vhd` | **Active** stepper FSM |
@@ -57,6 +64,8 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 ---
 
 ## Packet Wire Format
+
+Constants (`SOF_BYTE_1/2`, `TYPE_*`, `POINT_LEN`, `BAUD_RATE`, `DISC_RADIUS_UM`, `MAX_STEPS`) are defined in `src/protocol.h`. See the **Protocol Constants** section below for update instructions.
 
 ```
 [ 0xAA | 0x55 | TYPE (1B) | LEN (1B) | PAYLOAD (LEN bytes) | CRC8 (1B) ]
@@ -182,10 +191,12 @@ All banks 3.3 V LVCMOS33.
 make                         # builds build/RAPID.exe
 make run PORT=COM25 FILE=input.gds
 make gui                     # launches src/gui.py
+make e2e SIM_PORT=COM10 PC_PORT=COM11  # E2E protocol test (requires com0com + pyserial)
 make clean
 ```
 
-Toolchain: MinGW-w64 / MSYS2 UCRT64 gcc, `-O2 -Wall -Wextra -std=c11 -lm`. Sources: `src/pcCommunication.c` + `src/inputParser.c`.
+Toolchain: MinGW-w64 / MSYS2 UCRT64 gcc, `-O2 -Wall -Wextra -std=c11 -lm`.
+Sources: `src/pcCommunication.c` + `src/framing.c` + `src/inputParser.c`.
 
 ---
 
@@ -204,12 +215,21 @@ Units: micrometres (integers). `convertToPolar()`: `r = sqrt(x²+y²)`, `theta =
 
 ## GUI (`src/gui.py`)
 
-PySide6 + pyqtgraph. Launches `RAPID.exe` as a `QProcess`, parses stdout with regex:
-- `[ACK] r=<r> um, theta=<t> deg` → plots point
-- `[FPGA] <msg>` → scrolling log
-- `[RX] CRC mismatch` → error counter
+PySide6 + pyqtgraph. Launches `RAPID.exe` as a `QProcess`. All output is shown in the scrolling log. Structured events are carried on lines starting with `>> ` and parsed as JSON:
 
-Plot refreshes at 10 Hz. Default port: `COM25`, file: `input.gds`.
+| Event `"type"` | Fields | Action |
+|---|---|---|
+| `"ack"` | `r_um`, `theta_deg` | Plot point, increment ACK counter |
+| `"crc_error"` | — | Increment CRC error counter |
+| `"done"` | `points_sent`, `acks_received` | (informational) |
+
+Human-readable lines (`[ACK] ...`, `[FPGA] ...`) are always emitted alongside for terminal use. Plot refreshes at 10 Hz. Default port: `COM25`, file: `input.gds`.
+
+## Protocol Constants
+
+All wire-protocol and physical constants live in **`src/protocol.h`** (PC side). The Vitis build has an identical copy at `vitis_workspace/systemControl/protocol.h`. `tests/fpga_sim.py` mirrors the same values in Python with a comment pointing here.
+
+**When changing constants:** update `src/protocol.h` → copy to `vitis_workspace/systemControl/protocol.h` → update the constants block in `tests/fpga_sim.py`.
 
 ---
 

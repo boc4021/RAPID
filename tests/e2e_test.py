@@ -20,6 +20,7 @@ its 32-second hardware init wait and sends packets immediately.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -27,10 +28,10 @@ import sys
 import threading
 import time
 
-# Regex matching a point ACK line printed by pcCommunication.c
-ACK_RE = re.compile(r"\[ACK\]\s+r=-?\d+\s+um")
-# Regex for the final summary line
-DONE_RE = re.compile(r"Done\s+-\s+(\d+)\s+points sent,\s+(\d+)\s+ACKs received")
+# Matches the structured JSON event lines emitted by pcCommunication.c:
+#   >> {"type":"ack", "r_um":..., "theta_deg":...}
+#   >> {"type":"done", "points_sent":..., "acks_received":...}
+JSON_LINE_PREFIX = ">> "
 
 COORD_RE = re.compile(r"-?\d+\s*:\s*-?\d+")
 
@@ -145,7 +146,21 @@ def main() -> int:
     sim_thread.join(timeout=5)
 
     # ---- Evaluate --------------------------------------------------------
-    ack_count = sum(1 for l in rapid_lines if ACK_RE.search(l))
+    # Parse structured JSON events from the >> lines (the machine-readable contract).
+    ack_count = 0
+    done_evt  = None
+    for line in rapid_lines:
+        if not line.startswith(JSON_LINE_PREFIX):
+            continue
+        try:
+            evt = json.loads(line[len(JSON_LINE_PREFIX):])
+        except json.JSONDecodeError:
+            continue
+        if evt.get("type") == "ack":
+            ack_count += 1
+        elif evt.get("type") == "done":
+            done_evt = evt
+
     exit_code = rapid_proc.returncode
 
     print()
@@ -153,14 +168,9 @@ def main() -> int:
     print(f"[E2E] Expected point ACKs : {expected}")
     print(f"[E2E] Received point ACKs : {ack_count}")
     print(f"[E2E] RAPID.exe exit code : {exit_code}")
-
-    # Also check the final summary line for sanity
-    for line in rapid_lines:
-        m = DONE_RE.search(line)
-        if m:
-            pts_sent = int(m.group(1))
-            acks_rcvd = int(m.group(2))
-            print(f"[E2E] RAPID summary       : {pts_sent} sent, {acks_rcvd} ACKs")
+    if done_evt:
+        print(f"[E2E] RAPID summary       : {done_evt['points_sent']} sent, "
+              f"{done_evt['acks_received']} ACKs")
 
     passed = (exit_code == 0 and ack_count == expected)
     print(f"\n[E2E] {'PASS' if passed else 'FAIL'}")

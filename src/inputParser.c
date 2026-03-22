@@ -12,14 +12,6 @@ COMPILE WITH:
 gcc -Wall -Wextra -O2 -o inputParser inputParser.c -lm
 */
 
-/*
-// error function
-static void error(const char *msg) {
-    fprintf(stderr, "*ERROR: %s\n", msg);
-    exit(1);
-}
-*/
-
 // read input file
 // grab the points starting from "XY"
 Coordinate *getCoordinates(const char *filename, size_t *count) {
@@ -84,29 +76,3 @@ PolarPoint *convertToPolar(const Coordinate *coords, size_t count) {
     return polar;
 }
 
-/* MAIN TEST
-
-int main(void) {
-    size_t count = 0;
-    Coordinate *coordinates = getCoordinates("input.gds", &count);
-    if (!coordinates) error("Failed to parse coordinates\n");
-
-    // test print statement
-    for (size_t i = 0; i < count; i++) {
-        printf("coord[%zu] = (%d, %d)\n", i, coordinates[i].x, coordinates[i].y);
-    }
-
-    // convert coordinates to polar arcs
-    PolarPoint *polar = convertToPolar(coordinates, count);
-    if (!polar) error("Failed to convert to polar\n");
-
-    // test print statement
-    for (size_t i = 0; i < count; i++) {
-        printf("polar[%zu] = (r=%.3f nm, theta=%.2f deg)\n", i, polar[i].r, polar[i].theta);
-    }
-
-    free(coordinates);
-    free(polar);
-    return 0;
-}
-*/

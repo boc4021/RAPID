@@ -36,7 +36,9 @@ except ImportError:
     print("ERROR: pyserial not installed.  Run: pip install pyserial", file=sys.stderr)
     sys.exit(1)
 
-# ---- Protocol constants (mirrored from pcCommunication.c) ----
+# ---- Protocol & motor constants -------------------------------------------
+# Canonical source of truth: src/protocol.h
+# Update this block whenever protocol.h changes.
 SOF1       = 0xAA
 SOF2       = 0x55
 TYPE_POINT = 0x01
@@ -44,8 +46,6 @@ TYPE_END   = 0x03
 TYPE_ACK   = 0x81
 POINT_LEN  = 8
 BAUD_RATE  = 115200
-
-# ---- Motor constants (mirrored from systemControl.c) ----
 MAX_STEPS      = 8500
 DISC_RADIUS_UM = 33000
 

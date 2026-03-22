@@ -11,7 +11,7 @@ Usage:
 
 import sys
 import signal
-import re
+import json
 import math
 from pathlib import Path
 
@@ -23,14 +23,15 @@ from PySide6.QtWidgets import (
 import pyqtgraph as pg
 
 # ---------------------------------------------------------------------------
-# Regex patterns for parsing RAPID.exe stdout
+# Structured event parsing
 # ---------------------------------------------------------------------------
-#   [ACK] r=<int> um, theta=<float> deg  - acknowledged polar point
-#   [FPGA] <text>                         - debug message from FPGA
-#   [RX] CRC mismatch ...                 - checksum failure
-ACK_RE  = re.compile(r"\[ACK\]\s+r=(?P<r>-?\d+)\s+um,\s+theta=(?P<t>-?\d+\.?\d*)\s+deg")
-FPGA_RE = re.compile(r"\[FPGA\]\s+(?P<msg>.*)")
-CRC_RE  = re.compile(r"\[RX\]\s+CRC mismatch")
+# RAPID.exe emits lines beginning with ">> " carrying a JSON event object.
+# Human-readable lines are always printed alongside them for terminal use.
+# Event types emitted by pcCommunication.c:
+#   {"type":"ack",       "r_um":<int>,  "theta_deg":<float>}
+#   {"type":"crc_error"}
+#   {"type":"done",      "points_sent":<int>, "acks_received":<int>}
+# See src/pcCommunication.c for the full list.
 
 # Number of segments used to draw the reference circle on the plot
 _CIRCLE_PTS = 256
@@ -56,12 +57,20 @@ class GUI(QWidget):
         super().__init__()
         self.setWindowTitle("UART Polar GUI")
 
-        # ---- subprocess state ----
+        # ---- subprocess state — normal run ----
         self.proc = QProcess(self)
-        self.proc.setProcessChannelMode(QProcess.MergedChannels)  # combine stdout+stderr
+        self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyReadStandardOutput.connect(self._on_ready_read)
         self.proc.finished.connect(self._on_finished)
         self.proc.errorOccurred.connect(self._on_error)
+
+        # ---- subprocess state — E2E test ----
+        self.test_proc = QProcess(self)
+        self.test_proc.setProcessChannelMode(QProcess.MergedChannels)
+        self.test_proc.readyReadStandardOutput.connect(self._on_test_ready_read)
+        self.test_proc.finished.connect(self._on_test_finished)
+        self.test_proc.errorOccurred.connect(self._on_test_error)
+        self._test_read_buf = ""
 
         # ---- data state ----
         self.ack_count = 0
@@ -76,6 +85,7 @@ class GUI(QWidget):
         self._build_exe_row(root)
         self._build_port_file_row(root)
         self._build_button_row(root)
+        self._build_test_row(root)
         self._build_status_row(root)
         self._build_plot(root)
         self._build_log(root)
@@ -123,6 +133,22 @@ class GUI(QWidget):
         row.addWidget(self.btn_start)
         row.addWidget(self.btn_stop)
         row.addWidget(self.btn_clear)
+        row.addStretch(1)
+        parent.addLayout(row)
+
+    def _build_test_row(self, parent):
+        row = QHBoxLayout()
+        self.sim_port = QLineEdit("COM10")
+        self.sim_port.setFixedWidth(70)
+        self.btn_run_test  = QPushButton("Run E2E Test")
+        self.btn_stop_test = QPushButton("Stop Test")
+        self.btn_stop_test.setEnabled(False)
+        self.btn_run_test.clicked.connect(self.run_test)
+        self.btn_stop_test.clicked.connect(self.stop_test)
+        row.addWidget(QLabel("Sim Port:"))
+        row.addWidget(self.sim_port)
+        row.addWidget(self.btn_run_test)
+        row.addWidget(self.btn_stop_test)
         row.addStretch(1)
         parent.addLayout(row)
 
@@ -228,6 +254,42 @@ class GUI(QWidget):
         self.lbl_status.setText("Status: idle")
         self._set_running(False)
 
+    def run_test(self):
+        """Launch e2e_test.py connecting fpga_sim.py to RAPID.exe via a COM port pair."""
+        if self.test_proc.state() != QProcess.NotRunning:
+            return
+
+        sim_port = self.sim_port.text().strip()
+        pc_port  = self.port.text().strip()
+        gds      = self.gds_file.text().strip()
+        exe      = self.exe_path.text().strip()
+        root     = str(Path(exe).parent.parent) if exe else "."
+
+        script = str(Path(root) / "tests" / "e2e_test.py")
+        args   = [
+            script,
+            "--sim-port", sim_port,
+            "--pc-port",  pc_port,
+            "--gds",      gds,
+            "--rapid",    exe,
+        ]
+
+        self._append_log(f"[TEST] Starting E2E test  sim={sim_port}  pc={pc_port}  gds={gds}")
+        self.lbl_status.setText("Status: testing")
+        self.btn_run_test.setEnabled(False)
+        self.btn_stop_test.setEnabled(True)
+
+        self.test_proc.setWorkingDirectory(root)
+        self.test_proc.setProgram(sys.executable)
+        self.test_proc.setArguments(args)
+        self.test_proc.start()
+
+    def stop_test(self):
+        if self.test_proc.state() != QProcess.NotRunning:
+            self.test_proc.terminate()
+            if not self.test_proc.waitForFinished(1000):
+                self.test_proc.kill()
+
     # ---- QProcess signal handlers ----
 
     def _on_error(self, _err):
@@ -236,13 +298,35 @@ class GUI(QWidget):
         self._set_running(False)
 
     def _on_finished(self):
-        # flush any leftover partial line sitting in the read buffer
         if self._read_buf.strip():
             self._process_line(self._read_buf)
         self._read_buf = ""
         self._append_log("[GUI] Process finished.")
         self.lbl_status.setText("Status: idle")
         self._set_running(False)
+
+    def _on_test_ready_read(self):
+        self._test_read_buf += bytes(
+            self.test_proc.readAllStandardOutput()).decode(errors="replace")
+        while "\n" in self._test_read_buf:
+            line, self._test_read_buf = self._test_read_buf.split("\n", 1)
+            self._append_log(f"[TEST] {line.rstrip()}")
+
+    def _on_test_finished(self, exit_code, _exit_status):
+        if self._test_read_buf.strip():
+            self._append_log(f"[TEST] {self._test_read_buf.rstrip()}")
+        self._test_read_buf = ""
+        result = "PASS" if exit_code == 0 else "FAIL"
+        self._append_log(f"[TEST] {result} (exit code {exit_code})")
+        self.lbl_status.setText(f"Status: test {result.lower()}")
+        self.btn_run_test.setEnabled(True)
+        self.btn_stop_test.setEnabled(False)
+
+    def _on_test_error(self, _err):
+        self._append_log(f"[TEST] Error: {self.test_proc.errorString()}")
+        self.lbl_status.setText("Status: test error")
+        self.btn_run_test.setEnabled(True)
+        self.btn_stop_test.setEnabled(False)
 
     def _on_ready_read(self):
         """Accumulate stdout data; dispatch only complete newline-terminated lines."""
@@ -258,20 +342,22 @@ class GUI(QWidget):
         """Parse a single output line and update counters / data lists."""
         self._append_log(line)
 
-        # check for ACK line → extract polar coords and store
-        m = ACK_RE.search(line)
-        if m:
-            r_um  = int(m.group("r"))
-            t_deg = float(m.group("t"))
-            self.ack_r.append(r_um)
-            self.ack_theta_deg.append(t_deg)
+        if not line.startswith(">> "):
+            return
+
+        try:
+            evt = json.loads(line[3:])
+        except json.JSONDecodeError:
+            return
+
+        t = evt.get("type")
+        if t == "ack":
+            self.ack_r.append(evt["r_um"])
+            self.ack_theta_deg.append(evt["theta_deg"])
             self.ack_count += 1
             self.lbl_ack.setText(f"ACK: {self.ack_count}")
             self._plot_dirty = True
-            return
-
-        # check for CRC error line
-        if CRC_RE.search(line):
+        elif t == "crc_error":
             self.crc_count += 1
             self.lbl_crc.setText(f"CRC: {self.crc_count}")
 
