@@ -29,8 +29,40 @@ float   unpack_f32_le(const uint8_t b[4]);
  */
 HANDLE open_serial(const char *com_name, int baud);
 
-/** Write all len bytes of buf to h.  Returns 1 on success, 0 on error. */
-int write_all(HANDLE h, const uint8_t *buf, size_t len);
+/* ---- Inbound framing FSM -------------------------------------------- */
+
+/*
+ * FrameState — opaque FSM state for incremental frame parsing.
+ * Initialise with framing_state_init() before use.
+ * Feed bytes one at a time with framing_feed(); it calls on_packet
+ * whenever a complete, CRC-valid frame is assembled.
+ */
+typedef enum {
+    FS_SOF1, FS_SOF2, FS_TYPE, FS_LEN, FS_PAYLOAD, FS_CRC
+} FsmState;
+
+typedef struct {
+    FsmState st;
+    uint8_t  type;
+    uint8_t  len;
+    uint8_t  payload[255];
+    uint8_t  pay_i;
+} FrameState;
+
+/** Callback invoked once per valid received packet. */
+typedef void (*PacketHandler)(uint8_t type, uint8_t len,
+                              const uint8_t *payload, void *ctx);
+
+/** Reset a FrameState to the initial SOF-hunt state. */
+void framing_state_init(FrameState *fs);
+
+/**
+ * framing_feed — push one byte into the FSM.
+ * On CRC-valid frame completion, on_pkt is called synchronously.
+ * CRC mismatches are logged to stdout and the FSM resyncs on the next SOF.
+ */
+void framing_feed(FrameState *fs, uint8_t b,
+                  PacketHandler on_pkt, void *ctx);
 
 /* ---- Outgoing packet builders --------------------------------------- */
 

@@ -24,7 +24,7 @@ Coordinate *getCoordinates(const char *filename, size_t *count) {
 
     size_t capacity = 8; // array capacity
     *count = 0; // current number of coordinate pairs
-   
+
     Coordinate *coordinates = malloc(capacity * sizeof(Coordinate));
     if (!coordinates) { fclose(fp); return NULL; }
 
@@ -48,10 +48,12 @@ Coordinate *getCoordinates(const char *filename, size_t *count) {
                 coordinates[*count].x = x;
                 coordinates[*count].y = y;
                 (*count)++;
+            } else if (line[0] != '\n' && line[0] != '\r' && line[0] != '\0') {
+                fprintf(stderr, "[WARN] unparseable line: %s", line);
             }
         }
     }
-        
+
     fclose(fp);
     return coordinates;
 }

@@ -2,8 +2,8 @@
  * protocol.h - RAPID wire protocol constants.
  *
  * Single source of truth for packet types, frame layout, and physical disc
- * parameters shared between the PC (src/pcCommunication.c / src/framing.c)
- * and the FPGA (vitis_workspace/systemControl/systemControl.c).
+ * parameters shared between the PC (src/main.c / src/framing.c)
+ * and the FPGA (vitis_workspace/systemControl/main.c).
  *
  * The Vitis build environment has isolated include paths, so an identical
  * copy lives at vitis_workspace/systemControl/protocol.h.  Keep both files

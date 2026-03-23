@@ -27,14 +27,47 @@ import pyqtgraph as pg
 # ---------------------------------------------------------------------------
 # RAPID.exe emits lines beginning with ">> " carrying a JSON event object.
 # Human-readable lines are always printed alongside them for terminal use.
-# Event types emitted by pcCommunication.c:
+# Event types emitted by main.c:
 #   {"type":"ack",       "r_um":<int>,  "theta_deg":<float>}
 #   {"type":"crc_error"}
 #   {"type":"done",      "points_sent":<int>, "acks_received":<int>}
-# See src/pcCommunication.c for the full list.
+# See src/main.c for the full list.
 
 # Number of segments used to draw the reference circle on the plot
 _CIRCLE_PTS = 256
+
+
+# ---------------------------------------------------------------------------
+# Protocol parser  (S-SRP-04 / S-OCP-03)
+# ---------------------------------------------------------------------------
+
+class ProtocolParser:
+    """Parse RAPID.exe structured output lines and dispatch to registered handlers.
+
+    Lines must begin with ">> " followed by a JSON object carrying a "type" field.
+    Call register() once per event type; call feed_line() for each output line.
+    Adding a new event type requires only a register() call — this class never
+    needs to change.  (S-OCP-03)
+    """
+
+    def __init__(self):
+        self._handlers: dict = {}
+
+    def register(self, event_type: str, fn):
+        """Register *fn(evt: dict)* as the handler for *event_type*."""
+        self._handlers[event_type] = fn
+
+    def feed_line(self, line: str):
+        """Parse *line*; call the matching handler if registered.  Silent on errors."""
+        if not line.startswith(">> "):
+            return
+        try:
+            evt = json.loads(line[3:])
+        except json.JSONDecodeError:
+            return
+        t = evt.get("type")
+        if t in self._handlers:
+            self._handlers[t](evt)
 
 
 def polar_to_xy(r_list, theta_deg_list):
@@ -79,6 +112,11 @@ class GUI(QWidget):
         self.ack_theta_deg: list[float] = []   # angles of ACK'd points (degrees)
         self._read_buf = ""                    # partial-line accumulation buffer
         self._plot_dirty = False               # flag: new data since last repaint
+
+        # ---- protocol parser ----
+        self._parser = ProtocolParser()
+        self._parser.register("ack",       self._on_ack)
+        self._parser.register("crc_error", self._on_crc_error)
 
         # ---- build UI ----
         root = QVBoxLayout(self)
@@ -234,6 +272,7 @@ class GUI(QWidget):
         if gds:
             args.append(gds)
 
+        self._read_buf = ""
         self._append_log(f"[GUI] Starting: {exe} {' '.join(args)}")
         self.lbl_status.setText("Status: running")
         self._set_running(True)
@@ -339,27 +378,26 @@ class GUI(QWidget):
     # ---- line parser ----
 
     def _process_line(self, line: str):
-        """Parse a single output line and update counters / data lists."""
+        """Log *line* then hand it to the protocol parser for event dispatch."""
         self._append_log(line)
+        self._parser.feed_line(line)
 
-        if not line.startswith(">> "):
+    # ---- protocol event handlers ----
+
+    def _on_ack(self, evt: dict):
+        r_um      = evt.get("r_um")
+        theta_deg = evt.get("theta_deg")
+        if r_um is None or theta_deg is None:
             return
+        self.ack_r.append(r_um)
+        self.ack_theta_deg.append(theta_deg)
+        self.ack_count += 1
+        self.lbl_ack.setText(f"ACK: {self.ack_count}")
+        self._plot_dirty = True
 
-        try:
-            evt = json.loads(line[3:])
-        except json.JSONDecodeError:
-            return
-
-        t = evt.get("type")
-        if t == "ack":
-            self.ack_r.append(evt["r_um"])
-            self.ack_theta_deg.append(evt["theta_deg"])
-            self.ack_count += 1
-            self.lbl_ack.setText(f"ACK: {self.ack_count}")
-            self._plot_dirty = True
-        elif t == "crc_error":
-            self.crc_count += 1
-            self.lbl_crc.setText(f"CRC: {self.crc_count}")
+    def _on_crc_error(self, _evt: dict):
+        self.crc_count += 1
+        self.lbl_crc.setText(f"CRC: {self.crc_count}")
 
     # ---- plot updates ----
 

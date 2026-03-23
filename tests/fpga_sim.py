@@ -1,13 +1,13 @@
 """
 fpga_sim.py - Software FPGA simulator for RAPID end-to-end testing.
 
-Simulates systemControl.c: opens a serial COM port and acts as the FPGA,
+Simulates vitis_workspace/systemControl/main.c: opens a serial COM port and acts as the FPGA,
 parsing framed polar-coordinate packets and sending ACK responses.
 
 No real motors, laser, GPIO, or I2C hardware is required.  The simulator
 logs what the physical hardware *would* do at each step.
 
-Wire protocol (shared with pcCommunication.c / systemControl.c):
+Wire protocol (shared with src/main.c / vitis_workspace/systemControl/main.c):
   SOF (0xAA 0x55) | TYPE (1 B) | LEN (1 B) | PAYLOAD (LEN B) | CRC8
 
   TYPE_POINT 0x01, LEN=8: r_um (int32 LE) + theta_deg (float32 LE)
@@ -37,30 +37,20 @@ except ImportError:
     sys.exit(1)
 
 # ---- Protocol & motor constants -------------------------------------------
-# Canonical source of truth: src/protocol.h
-# Update this block whenever protocol.h changes.
-SOF1       = 0xAA
-SOF2       = 0x55
-TYPE_POINT = 0x01
-TYPE_END   = 0x03
-TYPE_ACK   = 0x81
-POINT_LEN  = 8
-BAUD_RATE  = 115200
-MAX_STEPS      = 8500
-DISC_RADIUS_UM = 33000
+# Canonical source of truth: src/protocol.h  (mirrored in tests/protocol.py)
+from protocol import (
+    SOF1, SOF2, TYPE_POINT, TYPE_END, TYPE_ACK,
+    POINT_LEN, BAUD_RATE, MAX_STEPS, DISC_RADIUS_UM,
+    crc8_xor, r_um_to_steps,
+)
 
 
-def crc8_xor(data: bytes) -> int:
-    c = 0
-    for b in data:
-        c ^= b
-    return c
-
-
-def r_um_to_steps(r_um: int) -> int:
-    """Map physical radius (µm) to stepper step count.  Mirrors systemControl.c."""
-    target = int(r_um / DISC_RADIUS_UM * MAX_STEPS + 0.5)
-    return max(0, min(target, MAX_STEPS))
+def _read_exact(port: "serial.Serial", n: int) -> bytes:
+    """Read exactly n bytes; raise TimeoutError if fewer arrive."""
+    data = port.read(n)
+    if len(data) < n:
+        raise TimeoutError(f"Short read: expected {n} bytes, got {len(data)}")
+    return data
 
 
 def send_frame(port: "serial.Serial", pkt_type: int, payload: bytes) -> None:
@@ -72,34 +62,18 @@ def send_frame(port: "serial.Serial", pkt_type: int, payload: bytes) -> None:
 def receive_packet(port: "serial.Serial") -> tuple[int, bytes]:
     """Block until one valid framed packet arrives.  Returns (type, payload)."""
     while True:
-        b = port.read(1)
-        if not b:
-            raise TimeoutError("Serial read timeout waiting for SOF1")
+        b = _read_exact(port, 1)
         if b[0] != SOF1:
             continue
 
-        b = port.read(1)
-        if not b or b[0] != SOF2:
+        b = _read_exact(port, 1)
+        if b[0] != SOF2:
             continue
 
-        pkt_type = port.read(1)
-        if not pkt_type:
-            raise TimeoutError("Serial read timeout waiting for TYPE")
-        pkt_type = pkt_type[0]
-
-        length = port.read(1)
-        if not length:
-            raise TimeoutError("Serial read timeout waiting for LEN")
-        length = length[0]
-
-        payload = port.read(length) if length else b""
-        if len(payload) < length:
-            raise TimeoutError(f"Short read: expected {length} bytes, got {len(payload)}")
-
-        rx_crc = port.read(1)
-        if not rx_crc:
-            raise TimeoutError("Serial read timeout waiting for CRC")
-        rx_crc = rx_crc[0]
+        pkt_type = _read_exact(port, 1)[0]
+        length   = _read_exact(port, 1)[0]
+        payload  = _read_exact(port, length) if length else b""
+        rx_crc   = _read_exact(port, 1)[0]
 
         expected_crc = crc8_xor(bytes([pkt_type, length]) + payload)
         if expected_crc != rx_crc:
@@ -119,7 +93,7 @@ def run(port_name: str) -> int:
         print(f"[SIM] ERROR: could not open {port_name}: {e}", file=sys.stderr)
         return 1
 
-    print("[SIM] Ready. Simulating FPGA (systemControl.c) behaviour.", flush=True)
+    print("[SIM] Ready. Simulating FPGA (main.c) behaviour.", flush=True)
     print(f"[SIM] Disc radius: {DISC_RADIUS_UM} um, max steps: {MAX_STEPS}", flush=True)
 
     # Simulated hardware state
@@ -133,14 +107,28 @@ def run(port_name: str) -> int:
             pkt_type, payload = receive_packet(port)
 
             if pkt_type == TYPE_POINT:
+                if len(payload) < POINT_LEN:
+                    print(f"[SIM] POINT payload too short: {len(payload)} bytes — ignored",
+                          flush=True)
+                    continue
+
                 r_um,      = struct.unpack_from("<i", payload, 0)
                 theta_deg, = struct.unpack_from("<f", payload, 4)
 
                 target_step = r_um_to_steps(r_um)
+                # T-PAT-03: assert simulator invariants so violations fail the test
+                assert 0 <= target_step <= MAX_STEPS, (
+                    f"[SIM] ASSERT: target_step {target_step} out of [0, {MAX_STEPS}] "
+                    f"(r_um={r_um})")
+                assert r_um >= 0, f"[SIM] ASSERT: r_um={r_um} is negative"
                 delta       = abs(target_step - current_step)
                 direction   = "outward" if target_step >= current_step else "inward"
 
                 if delta > 0:
+                    # Note: the real FPGA sleeps for the move duration (usleep);
+                    # the simulator only logs it.  This is intentional — the
+                    # simulator runs without real-time delays so E2E tests
+                    # complete in seconds rather than minutes.
                     move_ms = delta * 2.0          # 500 Hz step rate => 2 ms/step
                     print(f"[SIM] POINT {point_count+1}: r={r_um} um, theta={theta_deg:.2f} deg "
                           f"-> step {current_step} -> {target_step} "
@@ -151,7 +139,7 @@ def run(port_name: str) -> int:
                     print(f"[SIM] POINT {point_count+1}: r={r_um} um, theta={theta_deg:.2f} deg "
                           f"-> already at step {current_step} (no move)", flush=True)
 
-                # Turn laser on after first move (mirrors systemControl.c first_point flag)
+                # Turn laser on after first move (mirrors main.c first_point flag)
                 if not laser_on:
                     laser_on = True
                     print("[SIM] Laser ON", flush=True)
@@ -163,6 +151,10 @@ def run(port_name: str) -> int:
                 print(f"[SIM] ACK #{point_count} sent", flush=True)
 
             elif pkt_type == TYPE_END:
+                # T-PAT-03: if points were received, laser must have been turned on
+                if point_count > 0:
+                    assert laser_on, (
+                        "[SIM] ASSERT: TYPE_END received after points but laser was never ON")
                 if laser_on:
                     laser_on = False
                     print("[SIM] Laser OFF", flush=True)
@@ -183,12 +175,12 @@ def run(port_name: str) -> int:
 
     except TimeoutError as e:
         print(f"[SIM] ERROR: {e}", file=sys.stderr)
-        port.close()
         return 1
     except KeyboardInterrupt:
         print("[SIM] Interrupted.", flush=True)
+    finally:
+        port.close()
 
-    port.close()
     return 0
 
 

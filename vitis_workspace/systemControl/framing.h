@@ -16,6 +16,7 @@
  */
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #include "xuartps.h"
 
 /* ---- Initialisation ------------------------------------------------- */
@@ -25,18 +26,12 @@ void framing_init(XUartPs *uart);
 
 /* ---- CRC ------------------------------------------------------------ */
 
-uint8_t crc8_xor(const uint8_t *data, unsigned len);
+uint8_t crc8_xor(const uint8_t *data, size_t len);
 
 /* ---- Little-endian deserialisation ---------------------------------- */
 
 int32_t unpack_i32_le(const uint8_t b[4]);
 float   unpack_f32_le(const uint8_t b[4]);
-
-/* ---- Low-level UART I/O --------------------------------------------- */
-
-void    uart_send(const uint8_t *buf, unsigned len);
-void    uart_flush_tx(void);
-uint8_t uart_recv_byte(void);
 
 /* ---- Framed packet TX ----------------------------------------------- */
 
@@ -54,11 +49,19 @@ void send_frame(uint8_t type, const uint8_t *payload, uint8_t len);
 /*
  * receive_packet - block until one valid framed packet arrives.
  *
- * Fills out_payload (caller must provide MAX_PAYLOAD bytes) with the
- * packet payload and returns the TYPE byte.  Frames with CRC mismatches
- * are silently discarded and the function re-synchronises on the next SOF.
+ * Fills out_payload (caller must provide 255 bytes) with the
+ * packet payload, writes the payload length to *out_len, and returns
+ * the TYPE byte.  Frames with CRC mismatches emit a debug_printf and
+ * re-synchronise on the next SOF.
+ *
+ * Returns TYPE_TIMEOUT (0xFF) if no byte arrives within the inter-byte
+ * deadline (~0.4 s per byte at 125 MHz).  The caller should treat this
+ * as a fatal communication loss and enter a safe shutdown state.
  */
-uint8_t receive_packet(uint8_t *out_payload);
+uint8_t receive_packet(uint8_t *out_payload, uint8_t *out_len);
+
+/* Sentinel returned by receive_packet on inter-byte timeout (not a wire type). */
+#define TYPE_TIMEOUT 0xFFu
 
 /* ---- Debug output --------------------------------------------------- */
 

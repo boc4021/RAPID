@@ -31,6 +31,22 @@
 /* ------------------------------------------------------------------ */
 
 /*
+ * wait_bus_free - spin until the I2C bus is idle or a timeout expires.
+ *
+ * At a 100 MHz AXI bus, 100 000 iterations ≈ 1 ms — more than enough
+ * for a 100 kHz I2C bus to complete a byte transfer.  Returns
+ * XST_SUCCESS when the bus is free, XST_FAILURE on timeout.
+ */
+static int wait_bus_free(XIicPs *iic)
+{
+    uint32_t retries = 100000;
+    while (XIicPs_BusIsBusy(iic)) {
+        if (--retries == 0) return XST_FAILURE;
+    }
+    return XST_SUCCESS;
+}
+
+/*
  * mlx_cmd - send a single command byte, read back the 1-byte status.
  *
  * Returns status byte on success, 0xFF if the I2C transaction failed.
@@ -42,7 +58,7 @@ static uint8_t mlx_cmd(MLX90393 *dev, uint8_t cmd)
 
     if (XIicPs_MasterSendPolled(&dev->iic, &buf, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return 0xFF;
-    while (XIicPs_BusIsBusy(&dev->iic)) {}
+    if (wait_bus_free(&dev->iic) != XST_SUCCESS) return 0xFF;
 
     buf = 0;
     if (XIicPs_MasterRecvPolled(&dev->iic, &buf, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
@@ -73,7 +89,7 @@ static uint8_t mlx_write_reg(MLX90393 *dev, uint8_t reg, uint16_t val)
 
     if (XIicPs_MasterSendPolled(&dev->iic, buf, 4, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return 0xFF;
-    while (XIicPs_BusIsBusy(&dev->iic)) {}
+    if (wait_bus_free(&dev->iic) != XST_SUCCESS) return 0xFF;
 
     if (XIicPs_MasterRecvPolled(&dev->iic, &status, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return 0xFF;
@@ -148,7 +164,7 @@ int mlx_read_angle(MLX90393 *dev, float *angle_out)
     cmd = MLX_CMD_SM_XY;
     if (XIicPs_MasterSendPolled(&dev->iic, &cmd, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return XST_FAILURE;
-    while (XIicPs_BusIsBusy(&dev->iic)) {}
+    if (wait_bus_free(&dev->iic) != XST_SUCCESS) return XST_FAILURE;
     if (XIicPs_MasterRecvPolled(&dev->iic, &status, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return XST_FAILURE;
 
@@ -160,7 +176,7 @@ int mlx_read_angle(MLX90393 *dev, float *angle_out)
     cmd = MLX_CMD_RM_XY;
     if (XIicPs_MasterSendPolled(&dev->iic, &cmd, 1, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return XST_FAILURE;
-    while (XIicPs_BusIsBusy(&dev->iic)) {}
+    if (wait_bus_free(&dev->iic) != XST_SUCCESS) return XST_FAILURE;
     memset(buf, 0, sizeof(buf));
     if (XIicPs_MasterRecvPolled(&dev->iic, buf, 7, MLX90393_I2C_ADDR) != XST_SUCCESS)
         return XST_FAILURE;
@@ -194,7 +210,7 @@ int mlx_read_angle(MLX90393 *dev, float *angle_out)
      */
     float cross = dev->prev_x_cal * cal_y - dev->prev_y_cal * cal_x;
     float dot   = dev->prev_x_cal * cal_x + dev->prev_y_cal * cal_y;
-    float delta = (atan2f(cross, dot) * 180.0f / 3.14159265f) / MLX_ANGLE_DIVISOR;
+    float delta = (atan2f(cross, dot) * (float)(180.0 / M_PI)) / MLX_ANGLE_DIVISOR;
 
     dev->accumulated_angle += delta;
     dev->prev_x_cal = cal_x;

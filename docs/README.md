@@ -12,13 +12,13 @@ Streams GDS2 lithography patterns to an FPGA over UART for motor-driven stage co
 RAPID reads a GDS2 input file, converts the XY coordinates to polar form, and transmits each point as a framed binary packet over a serial COM port to a Zynq FPGA. The FPGA drives a stepper motor (radial axis) and laser to write the pattern on a spinning disc. The PC waits for each ACK before sending the next point (stop-and-wait flow control). A Python GUI provides real-time visualisation of the acknowledged points.
 
 ```
-input.gds  ──►  inputParser  ──►  pcCommunication  ──►  UART  ──►  systemControl
-                (XY -> polar)       (frame + send)                  (recv + motor control)
+input.gds  ──►  inputParser  ──►  src/main  ──►  UART  ──►  systemControl/main
+                (XY -> polar)       (frame + send)               (recv + motor control)
                                          ▲                                  │
                                       gui.py  ◄──── ACK log ────────────────┘
                                    (live XY scatter)
 
-                                                          systemControl  ──►  AXI GPIO
+                                                     systemControl/main  ──►  AXI GPIO
                                                                          ──►  stepperDriver.vhd
                                                                          ──►  spindle.vhd
                                                                          ──►  LaserEn (pin P18)
@@ -34,12 +34,12 @@ RAPID/
 ├── src/
 │   ├── protocol.h            # Wire protocol constants & disc geometry (single source of truth)
 │   ├── framing.c/h           # CRC, pack/unpack, serial open/write, packet builders
-│   ├── pcCommunication.c     # Reader thread, stop-and-wait flow control, main() (-> RAPID.exe)
+│   ├── main.c                # Reader thread, stop-and-wait flow control, main() (-> RAPID.exe)
 │   ├── inputParser.c/h       # GDS2 parser: XY coordinates -> polar points
 │   ├── platform.c/h          # Xilinx cache init wrappers (shared by FPGA apps)
 │   └── gui.py                # PySide6 real-time visualisation GUI
 ├── tests/
-│   ├── fpga_sim.py           # Software FPGA simulator (simulates systemControl.c over serial)
+│   ├── fpga_sim.py           # Software FPGA simulator (simulates systemControl/main.c over serial)
 │   ├── e2e_test.py           # End-to-end test runner — launches both sides, checks all ACKs
 │   ├── Makefile              # make e2e target
 │   └── fixtures/
@@ -50,7 +50,7 @@ RAPID/
 │   └── systemControl/        # Active FPGA app — UART receiver + motor/laser control
 │       ├── protocol.h        # Copy of src/protocol.h (Vitis has isolated include paths)
 │       ├── framing.h/c       # Bare-metal framing layer: CRC, UART I/O, send_frame, receive_packet
-│       ├── systemControl.c   # Init sequence, move_to_step(), point loop, laser/motor control
+│       ├── main.c            # Init sequence, move_to_step(), point loop, laser/motor control
 │       ├── mlx90393.h/c      # MLX90393 magnetometer I2C driver (angle logging)
 ├── hardware/                 # Xilinx Vivado project files (FPGA hardware)
 │   ├── RAPID.srcs/sources_1/new/
@@ -100,7 +100,7 @@ pip install -r requirements.txt
 - Xilinx Vivado 2025.1 (or compatible)
 - Xilinx Vitis 2025.1 (or compatible)
 - Target device: Arty Z7-20 (xc7z020clg400-1)
-- `vitis_workspace/systemControl/systemControl.c` must be built inside a Vitis bare-metal project — it is **not** part of the PC Makefile.
+- `vitis_workspace/systemControl/main.c` must be built inside a Vitis bare-metal project — it is **not** part of the PC Makefile.
 
 ---
 
@@ -202,7 +202,7 @@ make clean
 
 ## Packet wire format
 
-Both `pcCommunication.c` and `systemControl.c` use the same framing. All constants are defined in `src/protocol.h` (PC) and `vitis_workspace/systemControl/protocol.h` (FPGA — identical copy):
+Both `src/main.c` and `vitis_workspace/systemControl/main.c` use the same framing. All constants are defined in `src/protocol.h` (PC) and `vitis_workspace/systemControl/protocol.h` (FPGA — identical copy):
 
 ```
 [ 0xAA | 0x55 | TYPE | LEN | PAYLOAD (LEN bytes) | CRC8 ]
@@ -223,9 +223,9 @@ CRC8 is computed as XOR over `[TYPE, LEN, PAYLOAD...]`.
 
 ---
 
-## GPIO control word (`systemControl.c`)
+## GPIO control word (`systemControl/main.c`)
 
-`systemControl.c` drives the motor hardware via a packed 27-bit value written to AXI GPIO Channel 1:
+`systemControl/main.c` drives the motor hardware via a packed 27-bit value written to AXI GPIO Channel 1:
 
 | Bits | Field | Description |
 |------|-------|-------------|
@@ -237,9 +237,9 @@ CRC8 is computed as XOR over `[TYPE, LEN, PAYLOAD...]`.
 | [25] | `step_go` | Step go: momentary high pulse triggers move |
 | [26] | `laser_en` | Laser enable: 0=off, 1=on |
 
-### `systemControl.c` automated sequence
+### `systemControl/main.c` automated sequence
 
-`systemControl.c` now runs fully automated — no interactive commands. On startup it executes the following sequence:
+`systemControl/main.c` now runs fully automated — no interactive commands. On startup it executes the following sequence:
 
 | Step | Action |
 |------|--------|

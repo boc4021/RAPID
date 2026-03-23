@@ -4,11 +4,11 @@
 #include "framing.h"
 #include "protocol.h"
 
-#include <stdint.h>
+#include <math.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
 
 /* ---- CRC ------------------------------------------------------------ */
 
@@ -95,15 +95,77 @@ HANDLE open_serial(const char *com_name, int baud) {
     return h;
 }
 
-int write_all(HANDLE h, const uint8_t *buf, size_t len) {
+static int write_all(HANDLE h, const uint8_t *buf, size_t len) {
     size_t sent = 0;
     while (sent < len) {
         DWORD wrote = 0;
-        if (!WriteFile(h, buf + sent, (DWORD)(len - sent), &wrote, NULL))
+        if (!WriteFile(h, buf + sent, (DWORD)(len - sent), &wrote, NULL)) {
+            fprintf(stderr, "[TX] WriteFile failed: error 0x%08lX\n",
+                    (unsigned long)GetLastError());
             return 0;
+        }
         sent += (size_t)wrote;
     }
     return 1;
+}
+
+/* ---- Inbound framing FSM -------------------------------------------- */
+
+void framing_state_init(FrameState *fs) {
+    fs->st    = FS_SOF1;
+    fs->type  = 0;
+    fs->len   = 0;
+    fs->pay_i = 0;
+}
+
+void framing_feed(FrameState *fs, uint8_t b,
+                  PacketHandler on_pkt, void *ctx)
+{
+    switch (fs->st) {
+    case FS_SOF1:
+        if (b == SOF_BYTE_1) fs->st = FS_SOF2;
+        break;
+
+    case FS_SOF2:
+        fs->st = (b == SOF_BYTE_2) ? FS_TYPE : FS_SOF1;
+        break;
+
+    case FS_TYPE:
+        fs->type = b;
+        fs->st   = FS_LEN;
+        break;
+
+    case FS_LEN:
+        fs->len   = b;
+        fs->pay_i = 0;
+        fs->st    = (b == 0) ? FS_CRC : FS_PAYLOAD;
+        break;
+
+    case FS_PAYLOAD:
+        fs->payload[fs->pay_i++] = b;
+        if (fs->pay_i >= fs->len) fs->st = FS_CRC;
+        break;
+
+    case FS_CRC: {
+        uint8_t chk[2 + 255];
+        chk[0] = fs->type;
+        chk[1] = fs->len;
+        for (uint8_t i = 0; i < fs->len; i++) chk[2 + i] = fs->payload[i];
+
+        if (crc8_xor(chk, 2 + fs->len) != b) {
+            printf("[RX] CRC mismatch (type=0x%02X, len=%u)\n", fs->type, fs->len);
+            printf(">> {\"type\":\"crc_error\"}\n");
+        } else {
+            on_pkt(fs->type, fs->len, fs->payload, ctx);
+        }
+        fs->st = FS_SOF1;
+        break;
+    }
+
+    default:
+        fs->st = FS_SOF1;
+        break;
+    }
 }
 
 /* ---- Outgoing packet builders --------------------------------------- */

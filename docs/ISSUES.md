@@ -16,18 +16,21 @@ The connection from `stepperDriver.vhd`'s `step_total_out` to AXI GPIO channel 2
 ## Active Software Issues
 
 ### S-1: Spindle runs open-loop
-`theta_deg` from each `TYPE_POINT` packet is available in `systemControl.c` but not used to command the spindle. The spindle runs fixed speed; full theta control requires closed-loop MLX90393 feedback (not yet implemented).
+`theta_deg` from each `TYPE_POINT` packet is available in `vitis_workspace/systemControl/main.c` but not used to command the spindle. The spindle runs fixed speed; full theta control requires closed-loop MLX90393 feedback (not yet implemented).
 
-### S-2: `protocol.h` sync is manual — drift risk
-`src/protocol.h` (PC), `vitis_workspace/systemControl/protocol.h` (FPGA copy), and the constants block at the top of `tests/fpga_sim.py` must be kept identical by hand. There is no automated check. If any one copy drifts, framing will silently misparse packets — CRC mismatches are likely but not guaranteed (e.g. a changed `POINT_LEN` would not affect the CRC).
-**Mitigation:** run `make check-proto` before each Vitis build — it diffs the `#define` lines between both copies and fails if they diverge.
+### S-2: `protocol.h` sync relies on manual `make check-proto` / `make sync-proto`
+`src/protocol.h` (PC) and `vitis_workspace/systemControl/protocol.h` (FPGA) must be byte-identical; `tests/protocol.py` must mirror the same constant values. `make check-proto` validates both (full-file diff for C copies, value comparison for Python), and `make sync-proto` copies the canonical file. However, this is not enforced in CI — a developer who forgets to run `check-proto` before a Vitis build could ship diverged constants.
+**Mitigation:** run `make check-proto` before each Vitis build. Consider adding it as a CI step.
 
 ### S-3: `FPGA_INIT_WAIT_MS` and `ZERO_WAIT_US` are not compile-time coupled
-The PC-side `FPGA_INIT_WAIT_MS` (32 000 ms, in `pcCommunication.c`) must always exceed the FPGA-side `ZERO_WAIT_US` (30 000 000 µs = 30 s, in `systemControl.c`). The two values live in different files and different build environments with no shared assertion. If `ZERO_WAIT_US` is increased without also updating `FPGA_INIT_WAIT_MS`, the PC will start sending packets before the FPGA finishes zeroing, causing the first points to be silently dropped.
+The PC-side `FPGA_INIT_WAIT_MS` (32 000 ms, in `src/main.c`) must always exceed the FPGA-side `ZERO_WAIT_US` (30 000 000 µs = 30 s, in `vitis_workspace/systemControl/main.c`). The two values live in different files and different build environments with no shared assertion. If `ZERO_WAIT_US` is increased without also updating `FPGA_INIT_WAIT_MS`, the PC will start sending packets before the FPGA finishes zeroing, causing the first points to be silently dropped.
 **Mitigation:** whenever `ZERO_WAIT_US` changes, update `FPGA_INIT_WAIT_MS` to `(ZERO_WAIT_US / 1000) + 2000`.
 
 ### S-4: E2E test only counts the first XY block in a GDS file
 `count_gds_points()` in `tests/e2e_test.py` stops at the first `ENDEL` token, mirroring the behaviour of `inputParser.c`. A GDS file with multiple boundary elements will silently have only its first block processed. This is consistent with the parser but limits test coverage of multi-element patterns.
+
+### S-5: `test_protocol_parser.py` requires PySide6
+The Python test for `ProtocolParser` imports from `gui.py`, which pulls in PySide6. This test cannot run in environments without PySide6 installed (e.g. headless CI). Consider extracting `ProtocolParser` into a standalone module.
 
 ---
 
@@ -62,8 +65,11 @@ The `usleep(10000)` in `mlx_read_angle` assumes DIG_FILT=3, OSR=3 (~6 ms convers
 Use MLX90393 angle feedback to command the spindle to the `theta_deg` target in each `TYPE_POINT` packet.
 
 ### F-2: DRDY polling instead of fixed wait
-Replace the `usleep(10000)` in `mlx_read_angle` with polling the DRDY status bit to reduce per-sample latency. Resolves I-7 dependency on CONF3 settings.
+Replace the `usleep(10000)` in `mlx_read_angle` with polling the DRDY status bit to reduce per-sample latency. Resolves I-6 dependency on CONF3 settings.
 
 ### F-3: MLX90393 bus-hang timeout — see I-1
 
 ### F-4: Verify `step_total_out` → GPIO ch2 — see H-1
+
+### F-5: CI integration
+Add `make check-proto` and `make test-unit-c` to a CI pipeline to catch protocol drift and regressions automatically.

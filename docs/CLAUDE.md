@@ -8,13 +8,13 @@ It streams GDS2 lithography patterns from a PC to an Arty Z7-20 FPGA over UART f
 ## System Architecture
 
 ```
-input.gds → inputParser → pcCommunication → UART → systemControl.c
-             (XY→polar)    (frame+send)               (recv+ACK+motor control)
+input.gds → inputParser → src/main → UART → systemControl/main
+             (XY→polar)    (frame+send)          (recv+ACK+motor control)
                                 ↑                           │
                              gui.py ←── ACK log ────────────┘
                           (live XY scatter)
 
-systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
+systemControl/main ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
                                      └──→ spindle.vhd (BLDC)
                                      └──→ LaserEn (GPIO pin P18)
                 ── PS I2C0 (EMIO→PL) ──→ MLX90393 magnetometer (angle logging)
@@ -28,16 +28,22 @@ systemControl.c ── AXI GPIO (PS→PL) ──→ stepperDriver.vhd
 |------|-------------|
 | `src/protocol.h` | **Single source of truth** — wire protocol constants, packet types, disc geometry |
 | `src/framing.c/h` | CRC-8, little-endian pack/unpack, `open_serial`, `write_all`, packet builders |
-| `src/pcCommunication.c` | Reader thread state machine, stop-and-wait flow control, `main()` → `build/RAPID.exe` |
+| `src/main.c` | Reader thread state machine, stop-and-wait flow control, `main()` → `build/RAPID.exe` |
 | `src/inputParser.c/h` | GDS2 text parser: XY coords → polar (r in µm, theta in degrees) |
 | `src/platform.c/h` | Xilinx cache init wrappers |
 | `src/gui.py` | PySide6 GUI — launches RAPID.exe, parses structured JSON output, plots ACK'd points |
 | `vitis_workspace/systemControl/protocol.h` | Identical copy of `src/protocol.h` for the Vitis build environment |
 | `vitis_workspace/systemControl/framing.h/.c` | Bare-metal framing layer: CRC-8, unpack, UART I/O, `send_frame`, `receive_packet`, `debug_printf` |
-| `vitis_workspace/systemControl/systemControl.c` | **Active** FPGA app — init sequence, `move_to_step()`, point loop, laser/motor control |
+| `vitis_workspace/systemControl/main.c` | **Active** FPGA app — init sequence, `move_to_step()`, point loop, laser/motor control |
 | `vitis_workspace/systemControl/mlx90393.h/.c` | MLX90393 bare-metal I2C driver |
+| `tests/protocol.py` | Python mirror of protocol constants + helpers (`crc8_xor`, `build_frame`, `r_um_to_steps`) |
 | `tests/fpga_sim.py` | Software FPGA simulator — opens COM port, parses packets, sends ACKs |
 | `tests/e2e_test.py` | E2E test runner — launches both sides, verifies all ACKs arrive |
+| `tests/test_framing.c` | C unit tests: CRC, pack/unpack, FSM (soft CHECK macro, no abort on failure) |
+| `tests/test_inputparser.c` | C unit tests: getCoordinates, convertToPolar |
+| `tests/test_protocol.py` | Python unit tests: crc8_xor, build_frame, r_um_to_steps |
+| `tests/test_protocol_parser.py` | Python unit tests: ProtocolParser class |
+| `tests/check_proto_py.py` | Script verifying tests/protocol.py constants match src/protocol.h |
 | `tests/fixtures/e2e_small.gds` | 3-point GDS for fast E2E runs |
 | `pointGenerator.py` | Generates sample GDS2 input (circle of N points at radius R) |
 | `old/angleMeasure.ino` | Archived Arduino angle-tracking sketch (calibration reference) |
@@ -99,7 +105,7 @@ Constants (`SOF_BYTE_1/2`, `TYPE_*`, `POINT_LEN`, `BAUD_RATE`, `DISC_RADIUS_UM`,
 
 `GPIO_MASK = 0x07FFFFFF`. Channel 2 is all-input, reserved for `step_total_out` readback.
 
-### systemControl.c Automated Sequence
+### systemControl/main.c Automated Sequence
 
 | Phase | Action |
 |-------|--------|
@@ -111,11 +117,15 @@ Constants (`SOF_BYTE_1/2`, `TYPE_*`, `POINT_LEN`, `BAUD_RATE`, `DISC_RADIUS_UM`,
 
 **Step mapping:** `target_step = clamp(round(r_um / 33000 × 8500), 0, 8500)` — 8500 steps = 33 mm.
 
-**Move wait:** `usleep(1200 + delta × 2000 + 10000)` µs after 100 ms `step_go` pulse.
+**Move wait:** `usleep(WAKEUP_HOLD_US + delta × US_PER_STEP + MOVE_MARGIN_US)` after `STEP_GO_PULSE_US` pulse.
 (`run_freq=250000` @ 125 MHz → 500 Hz step rate = 2000 µs/step)
 
 ```c
 #define ZERO_WAIT_US      30000000U   /* 30 s — increase if sled starts far from home */
+#define STEP_GO_PULSE_US  100000U     /* 100 ms — generous for DRV8834 wake */
+#define WAKEUP_HOLD_US    1200U       /* DRV8834 SLEEP→active settling */
+#define US_PER_STEP       2000U       /* 500 Hz step rate */
+#define MOVE_MARGIN_US    10000U      /* safety margin after computed move */
 #define FPGA_INIT_WAIT_MS 32000       /* PC-side: must be ≥ ZERO_WAIT_US + margin */
 ```
 
@@ -192,13 +202,17 @@ All banks 3.3 V LVCMOS33.
 make                         # builds build/RAPID.exe
 make run PORT=COM25 FILE=input.gds
 make gui                     # launches src/gui.py
+make test-unit               # all unit tests (C + Python, no hardware)
+make test-unit-c             # C unit tests only (framing + inputparser)
+make test-unit-py            # Python unit tests only (protocol + protocol_parser)
 make e2e SIM_PORT=COM4 PC_PORT=COM6  # E2E protocol test (requires com0com + pyserial)
-make check-proto             # verify src/ and vitis_workspace/ protocol.h are in sync
+make check-proto             # verify protocol.h copies are identical + Python constants match
+make sync-proto              # copy src/protocol.h → vitis_workspace/systemControl/protocol.h
 make clean
 ```
 
 Toolchain: MinGW-w64 / MSYS2 UCRT64 gcc, `-O2 -Wall -Wextra -std=c11 -lm`.
-Sources: `src/pcCommunication.c` + `src/framing.c` + `src/inputParser.c`.
+Sources: `src/main.c` + `src/framing.c` + `src/inputParser.c`.
 
 ---
 
@@ -231,7 +245,7 @@ Human-readable lines (`[ACK] ...`, `[FPGA] ...`) are always emitted alongside fo
 
 All wire-protocol and physical constants live in **`src/protocol.h`** (PC side). The Vitis build has an identical copy at `vitis_workspace/systemControl/protocol.h`. `tests/fpga_sim.py` mirrors the same values in Python with a comment pointing here.
 
-**When changing constants:** update `src/protocol.h` → copy to `vitis_workspace/systemControl/protocol.h` → update the constants block in `tests/fpga_sim.py`. Run `make check-proto` to verify the C copies are in sync.
+**When changing constants:** update `src/protocol.h` → run `make sync-proto` to copy to `vitis_workspace/systemControl/protocol.h` → update the matching values in `tests/protocol.py`. Run `make check-proto` to verify both the C copies are byte-identical and the Python constants match.
 
 ---
 

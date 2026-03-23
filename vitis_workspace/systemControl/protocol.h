@@ -1,11 +1,15 @@
 /*
- * protocol.h - RAPID wire protocol constants (FPGA / Vitis side).
+ * protocol.h - RAPID wire protocol constants.
  *
- * This file is an exact copy of src/protocol.h in the PC-side project.
- * The Vitis build environment uses isolated include paths, so it cannot
- * reference src/ directly.  Keep both files in sync whenever constants change.
+ * Single source of truth for packet types, frame layout, and physical disc
+ * parameters shared between the PC (src/main.c / src/framing.c)
+ * and the FPGA (vitis_workspace/systemControl/main.c).
  *
- * Canonical location: src/protocol.h
+ * The Vitis build environment has isolated include paths, so an identical
+ * copy lives at vitis_workspace/systemControl/protocol.h.  Keep both files
+ * in sync whenever constants change.
+ *
+ * tests/fpga_sim.py mirrors these values in Python — update it too.
  */
 #pragma once
 #include <stdint.h>
@@ -35,7 +39,7 @@
 /* ---- Physical disc parameters ---------------------------------------
  *   Stepper-to-radius mapping:
  *     steps = round( r_um * MAX_STEPS / DISC_RADIUS_UM )
- *   0 µm     → step 0        (inner edge / home position)
+ *   0 µm   → step 0          (inner edge / home position)
  *   33000 µm → step 8500     (outer edge, full disc travel)
  * -------------------------------------------------------------------- */
 #define DISC_RADIUS_UM  33000u  /* outer radius in µm  (33 mm standard CD) */

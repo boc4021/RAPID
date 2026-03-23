@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 
-# Matches the structured JSON event lines emitted by pcCommunication.c:
+# Matches the structured JSON event lines emitted by src/main.c:
 #   >> {"type":"ack", "r_um":..., "theta_deg":...}
 #   >> {"type":"done", "points_sent":..., "acks_received":...}
 JSON_LINE_PREFIX = ">> "
@@ -37,7 +37,11 @@ COORD_RE = re.compile(r"-?\d+\s*:\s*-?\d+")
 
 
 def count_gds_points(gds_path: str) -> int:
-    """Count coordinate pairs in a GDS file using the same logic as inputParser.c."""
+    """Count coordinate pairs in a GDS file using the same logic as inputParser.c.
+
+    Keep in sync with getCoordinates() in src/inputParser.c — both use
+    sscanf(line, "%d : %d", ...) / COORD_RE to detect valid coordinate lines,
+    and both break on "ENDEL" after the "XY" header."""
     count   = 0
     reading = False
     with open(gds_path) as f:
@@ -51,6 +55,30 @@ def count_gds_points(gds_path: str) -> int:
                 if COORD_RE.search(line):
                     count += 1
     return count
+
+
+def evaluate_output(rapid_lines: list, expected: int) -> tuple[int, dict | None]:
+    """Parse structured JSON events from RAPID.exe output lines.
+
+    Returns (ack_count, done_evt) where done_evt is the final summary dict or
+    None if no "done" event was found.
+    """
+    ack_count = 0
+    done_evt  = None
+    for line in rapid_lines:
+        if not line.startswith(JSON_LINE_PREFIX):
+            continue
+        try:
+            evt = json.loads(line[len(JSON_LINE_PREFIX):])
+        except json.JSONDecodeError as exc:
+            # T-QUA-03: log malformed JSON rather than swallowing it silently
+            print(f"[E2E] WARNING: malformed JSON event: {line!r} ({exc})", flush=True)
+            continue
+        if evt.get("type") == "ack":
+            ack_count += 1
+        elif evt.get("type") == "done":
+            done_evt = evt
+    return ack_count, done_evt
 
 
 def drain(proc: subprocess.Popen, lines: list, prefix: str) -> None:
@@ -108,7 +136,22 @@ def main() -> int:
         text=True, bufsize=1,
     )
     print(f"[E2E] fpga_sim.py started (PID {sim_proc.pid})", flush=True)
-    time.sleep(1)      # give the simulator a moment to open the port
+
+    # T-QUA-01: wait for the simulator's "Ready." line instead of sleeping.
+    # fpga_sim.py prints "[SIM] Ready." once the port is open and accepting.
+    sim_lines = []
+    _sim_deadline = time.time() + 15.0
+    for raw in sim_proc.stdout:
+        line = raw.rstrip()
+        sim_lines.append(line)
+        print(f"  [SIM] {line}", flush=True)
+        if "Ready." in line:
+            break
+        if time.time() > _sim_deadline:
+            print("[E2E] ERROR: simulator never printed 'Ready.' within 15 s",
+                  file=sys.stderr)
+            sim_proc.kill()
+            return 1
 
     # ---- Start RAPID.exe -------------------------------------------------
     env = os.environ.copy()
@@ -124,7 +167,7 @@ def main() -> int:
     print(f"[E2E] RAPID.exe started (PID {rapid_proc.pid})", flush=True)
 
     # ---- Drain output from both processes in parallel --------------------
-    sim_lines   = []
+    # sim_lines already pre-populated with startup lines read above.
     rapid_lines = []
 
     sim_thread   = threading.Thread(target=drain, args=(sim_proc,   sim_lines,   "[SIM]"),   daemon=True)
@@ -151,21 +194,18 @@ def main() -> int:
 
     # ---- Evaluate --------------------------------------------------------
     # Parse structured JSON events from the >> lines (the machine-readable contract).
-    ack_count = 0
-    done_evt  = None
-    for line in rapid_lines:
-        if not line.startswith(JSON_LINE_PREFIX):
-            continue
-        try:
-            evt = json.loads(line[len(JSON_LINE_PREFIX):])
-        except json.JSONDecodeError:
-            continue
-        if evt.get("type") == "ack":
-            ack_count += 1
-        elif evt.get("type") == "done":
-            done_evt = evt
-
+    ack_count, done_evt = evaluate_output(rapid_lines, expected)
     exit_code = rapid_proc.returncode
+
+    # T-QUA-02: use done_evt["points_sent"] as the authoritative point count
+    # (it comes directly from inputParser as used by RAPID.exe, removing the
+    # risk of count_gds_points() drifting from the C parser).
+    expected_from_exe = done_evt["points_sent"] if done_evt else None
+
+    if expected_from_exe is not None and expected_from_exe != expected:
+        print(f"[E2E] WARNING: count_gds_points={expected} but "
+              f"done.points_sent={expected_from_exe} — GDS parser may have drifted",
+              flush=True)
 
     print()
     print("=" * 60)
@@ -176,7 +216,14 @@ def main() -> int:
         print(f"[E2E] RAPID summary       : {done_evt['points_sent']} sent, "
               f"{done_evt['acks_received']} ACKs")
 
-    passed = (exit_code == 0 and ack_count == expected)
+    # T-COV-04: validate done_evt field values, not just presence.
+    # acks_received == points_sent + 1 because the end-packet ACK is also counted.
+    passed = (
+        exit_code == 0
+        and done_evt is not None
+        and ack_count == done_evt.get("points_sent", -1)
+        and done_evt.get("acks_received", -1) == done_evt.get("points_sent", -1) + 1
+    )
     print(f"\n[E2E] {'PASS' if passed else 'FAIL'}")
     print("=" * 60)
     return 0 if passed else 1
