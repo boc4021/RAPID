@@ -40,10 +40,20 @@ RAPID/
 │   └── gui.py                # PySide6 real-time visualisation GUI
 ├── tests/
 │   ├── fpga_sim.py           # Software FPGA simulator (simulates systemControl/main.c over serial)
+│   ├── fpga_sink.py          # Minimal ACK sink for manual framing tests
 │   ├── e2e_test.py           # End-to-end test runner — launches both sides, checks all ACKs
-│   ├── Makefile              # make e2e target
+│   ├── test_ack_timeout.py   # Python tests: ACK timeout / retry behaviour
+│   ├── test_framing.c        # C unit tests: CRC, pack/unpack, FSM (soft CHECK macro)
+│   ├── test_inputparser.c    # C unit tests: getCoordinates, convertToPolar
+│   ├── test_protocol.py      # Python unit tests: crc8_xor, build_frame, r_um_to_steps
+│   ├── test_protocol_parser.py # Python unit tests: ProtocolParser class
+│   ├── protocol.py           # Python mirror of protocol constants and helpers
+│   ├── check_proto_py.py     # Verifies tests/protocol.py constants match src/protocol.h
+│   ├── Makefile              # make test-unit / make e2e targets
 │   └── fixtures/
-│       └── e2e_small.gds     # 3-point GDS file for fast E2E runs
+│       ├── e2e_small.gds     # 3-point GDS file for fast E2E runs
+│       ├── e2e_single.gds    # Single-point GDS for minimal E2E test
+│       └── e2e_large.gds     # Larger GDS for stress E2E runs
 ├── vitis_workspace/          # Xilinx Vitis workspace (FPGA software)
 │   ├── platform/             # BSP platform project (generated from .xsa)
 │   ├── testControl/          # Test motor/laser controller
