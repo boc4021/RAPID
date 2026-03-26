@@ -203,10 +203,10 @@ begin
             --switch to idle if disabled mid-move
             pwm_sig <= '0';
             state <= IDLE;
-        elsif steps_remaining = 0 then
+        elsif en = '1' and steps_remaining = 0 then
             pwm_sig <= '0';
             state <= DONE;
-        else
+        elsif en = '1' and steps_remaining /= 0  then
             pwm_sig<=run_clk;
             --count step on each falling edge of run_clk - decrement after full pulse
             if run_clk = '0' and run_clk_prev = '1' then
