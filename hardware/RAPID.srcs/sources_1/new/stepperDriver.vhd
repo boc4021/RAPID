@@ -26,7 +26,7 @@ constant zero_freq : integer := 250000; --set 500 Hz for zeroing process
 --state logic for zero mode vs normal
 type state_t is (ZEROING, IDLE, WAKEUP, RUNNING, DONE);
 signal state : state_t := ZEROING;
-
+signal next_state : state_t;
 --normal running counter
 signal run_counter : integer range 0 to base_clk := 0;
 signal run_clk : std_logic := '0';
@@ -135,113 +135,156 @@ begin
 end process;
 
 --state machine logic
+-- FSM rewritten in 3-process model
+-- P1: state register           (synchronous)
+-- P2: transition logic         (combinatorial)
+-- P3: output logic             (synchronous, registered outputs)
+
+--Updating state register
 process(clk)
 begin
     if rising_edge(clk) then
-        --track previous values for run_clk and step
-        run_clk_prev <= run_clk;
-        step_go_prev <= step_go;
+        run_clk_prev  <= run_clk;
+        step_go_prev  <= step_go;
         zero_req_prev <= zero_req;
         zero_clk_prev <= zero_clk;
-    
+        state         <= next_state;
+    end if;
+end process;
+
+--Updating next_state combinatorially
+process(state, prox_stable, step_go, step_go_prev,
+        num_steps_int, en, zero_req, zero_req_prev,
+        wakeup_counter, steps_remaining)
+begin
+    next_state <= state;  -- default value to hold state if no transitions occur
+
     case state is
+
         when ZEROING =>
-            dir_sig <= '0'; --drive towards spindle
-            en_sig <= '1';
-            if en ='1' then
-                pwm_sig <= zero_clk;
-                
-                if zero_clk = '0' and zero_clk_prev = '1' then
-                    if dir ='1' then
-                        step_total <= step_total + 1;
-                    else 
-                        step_total <= step_total -1;
+            if prox_stable = '1' then
+                next_state <= IDLE;
+            end if;
+
+        when IDLE =>
+            if step_go = '1' and step_go_prev = '0'
+               and num_steps_int > 0 and en = '1' then
+                next_state <= WAKEUP;
+            elsif zero_req = '1' and zero_req_prev = '0' then
+                next_state <= ZEROING;
+            end if;
+
+        when WAKEUP =>
+            if wakeup_counter >= 150000 then
+                next_state <= RUNNING;
+            end if;
+
+        when RUNNING =>
+            if en = '0' then
+                next_state <= IDLE;
+            elsif steps_remaining = 0 then
+                next_state <= DONE;
+            end if;
+            -- priority to zeroing request
+            if zero_req = '1' and zero_req_prev = '0' then
+                next_state <= ZEROING;
+            end if;
+
+        when DONE =>
+            if step_go = '1' and step_go_prev = '0'
+               and num_steps_int > 0 and en = '1' then
+                next_state <= WAKEUP;
+            elsif zero_req = '1' and zero_req_prev = '0' then
+                next_state <= ZEROING;
+            end if;
+
+    end case;
+end process;
+
+--Updating outputs synchronously
+process(clk)
+begin
+    if rising_edge(clk) then
+        case state is
+
+            when ZEROING =>
+                dir_sig <= '0';  -- to the spindle
+                en_sig  <= '1';
+                if en = '1' then
+                    pwm_sig <= zero_clk;
+                    -- counting steps during zeroing on falling edge of zero_clk
+                    if zero_clk = '0' and zero_clk_prev = '1' then
+                        if dir = '1' then
+                            step_total <= step_total + 1;
+                        else
+                            step_total <= step_total - 1;
+                        end if;
+                    end if;
+                else
+                    pwm_sig <= '0';
+                end if;
+                -- reset of step_total when proximity sensor stable
+                if prox_stable = '1' then
+                    step_total <= 0;
+                end if;
+
+            when IDLE =>
+                pwm_sig <= '0';
+                dir_sig <= dir;
+                en_sig  <= '0';
+                -- detection of rising edge of step_go
+                if step_go = '1' and step_go_prev = '0' then
+                    if num_steps_int > 0 and en = '1' then
+                        wakeup_counter  <= 0;
+                        steps_remaining <= num_steps_int;
                     end if;
                 end if;
-                
-            else
+
+            when WAKEUP =>
+                en_sig  <= '1';
                 pwm_sig <= '0';
-            end if;
-            
-            if prox_stable = '1' then
-            step_total <= 0;
-                state <= IDLE;
-            end if;
-            
-       when IDLE =>
-            pwm_sig <= '0';
-            dir_sig <= dir;
-            en_sig <= '0';
-            --detect rising edge of step_go
-            if step_go ='1' and step_go_prev = '0' then
-                if num_steps_int > 0 and en = '1' then
+                if wakeup_counter < 150000 then
+                    wakeup_counter <= wakeup_counter + 1;
+                else
                     wakeup_counter <= 0;
-                    steps_remaining <= num_steps_int;
-                    state <= WAKEUP;
                 end if;
-            end if;
-            --rezero if requested
-            if zero_req = '1' and zero_req_prev = '0' then
-                state <= ZEROING;
-            end if;
-            
-       when WAKEUP =>
-        en_sig <= '1';
-        pwm_sig <= '0';
-        if wakeup_counter < 150000 then
-            wakeup_counter <= wakeup_counter + 1;
-        else 
-            wakeup_counter <= 0;
-            state <= RUNNING;
-        end if;
-            
-       --output run_clk, count # of steps (pulses)
-       when RUNNING =>
-        en_sig <= '1';
-        dir_sig <= dir;
-        if en = '0' then
-            --switch to idle if disabled mid-move
-            pwm_sig <= '0';
-            state <= IDLE;
-        elsif en = '1' and steps_remaining = 0 then
-            pwm_sig <= '0';
-            state <= DONE;
-        elsif en = '1' and steps_remaining /= 0  then
-            pwm_sig<=run_clk;
-            --count step on each falling edge of run_clk - decrement after full pulse
-            if run_clk = '0' and run_clk_prev = '1' then
-                steps_remaining <= steps_remaining - 1;
-                if dir ='1' then
-                    step_total <= step_total + 1;
-                else 
-                    step_total <= step_total -1;
+
+            when RUNNING =>
+                en_sig  <= '1';
+                dir_sig <= dir;
+                if en = '0' then
+                    pwm_sig <= '0';
+                elsif steps_remaining = 0 then
+                    pwm_sig <= '0';
+                else
+                    pwm_sig <= run_clk;
+                    -- Decrementer steps_remaining sur front descendant de run_clk
+                    if run_clk = '0' and run_clk_prev = '1' then
+                        steps_remaining <= steps_remaining - 1;
+                        if dir = '1' then
+                            step_total <= step_total + 1;
+                        else
+                            step_total <= step_total - 1;
+                        end if;
+                    end if;
                 end if;
-            end if; 
-        end if;
-        
-        if zero_req = '1' and zero_req_prev = '0' then
-            pwm_sig <= '0';
-            state <= ZEROING;
-        end if;
-        
-        when DONE =>
-            pwm_sig <= '0';
-            dir_sig <= dir; 
-            en_sig <= '0'; --place motor driver in sleep mode
-            if step_go = '1' and step_go_prev = '0' then
-                if num_steps_int > 0 and en = '1' then
-                    steps_remaining <= num_steps_int;
-                    wakeup_counter <= 0;
-                    state <= WAKEUP;
+                if zero_req = '1' and zero_req_prev = '0' then
+                    pwm_sig <= '0';
                 end if;
-            end if;
-            
-            if zero_req = '1' and zero_req_prev = '0' then
-                state <= ZEROING;
-            end if;
-        
+
+            when DONE =>
+                pwm_sig <= '0';
+                dir_sig <= dir;
+                en_sig  <= '0';  -- Motor disabled
+                if step_go = '1' and step_go_prev = '0' then
+                    if num_steps_int > 0 and en = '1' then
+                        steps_remaining <= num_steps_int;
+                        wakeup_counter  <= 0;
+                    end if;
+                end if;
+
         end case;
-     end if;
+    end if;
 end process;
         
 
